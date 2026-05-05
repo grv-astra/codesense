@@ -1,0 +1,33 @@
+sequenceDiagram
+    participant Admin as Local Admin
+    participant LS as Local Server (Core App)
+    participant CS as Central Server
+
+    %% --- Provisioning ---
+    Admin->>LS: Install Local App + Input License Config
+    LS->>CS: Provision Request (license_id, pubkey, machine_uuid)
+    CS-->>LS: {local_id, central_pubkey, provisioning_jwt}
+
+    %% --- Handshake (before usage) ---
+    LS->>CS: Challenge Request (license_id, local_id)
+    CS-->>LS: Nonce
+    LS->>LS: Sign nonce with local private key
+    LS->>CS: Assertion Request (nonce + signed_nonce + provisioning_jwt)
+    CS-->>LS: assertion_jwt (~10 min)
+
+    %% --- Normal Usage ---
+    Admin->>LS: Run Scan (protected API)
+    LS->>LS: Verify assertion_jwt (using central_pubkey)
+    LS->>CS: Report Usage (assertion_jwt, scans_used)
+    CS-->>LS: OK + remaining_scans
+
+    %% --- Refresh Cycle ---
+    loop Every 10 min
+        LS->>CS: Refresh assertion_jwt
+        alt License valid
+            CS-->>LS: New assertion_jwt
+        else License expired/revoked
+            CS-->>LS: Reject ❌
+            LS->>LS: Stop all licensed operations
+        end
+    end
