@@ -362,8 +362,8 @@ class SbomCreateView(APIView):
             try:
                 logging.info(f"Starting SBOM scan {scan_id}")
                 SbomModel.update_status(scan_id, "in_progress")
-                from scanner.services.pipeline.sbom_pipeline import run_whole_anchore_pipeline
-                results = run_whole_anchore_pipeline(
+                from scanner.services.sbom_pipeline import run_project_pipeline
+                results = run_project_pipeline(
                     project_path=extracted_folder_path,
                     scan_id=scan_id,
                     triggered_by=triggered_by,
@@ -485,7 +485,7 @@ class GrypeCreateView(APIView):
                 logging.info(f"Starting SBOM scan {scan_id}")
                 SbomModel.update_status(scan_id, "in_progress")
 
-                from scanner.services.pipeline.sbom_pipeline import run_sbom_pipeline
+                from scanner.services.sbom_pipeline import run_sbom_pipeline
 
                 print(f"Running SBOM pipeline with file: {temp_file_path}")
                 results = run_sbom_pipeline(

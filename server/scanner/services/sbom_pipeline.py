@@ -1,12 +1,77 @@
 import json
+import os
 import subprocess
 from collections import defaultdict
 from datetime import datetime, timezone
 from bson import ObjectId
 from pathlib import Path
-
+import shutil
 from local.api_app.models.sbom_models import SbomModel
 
+# ============================================================
+# COSIGN CONFIG
+# ============================================================
+BASE_DIR = Path(__file__).resolve().parent
+
+COSIGN_PRIVATE_KEY = (BASE_DIR / ".." / ".." / "keys" / "cosign.key").resolve()
+COSIGN_PUBLIC_KEY = (BASE_DIR / ".." / ".." / "keys" / "cosign.pub").resolve()
+COSIGN_SIGNING_CONFIG = (BASE_DIR / ".." / ".." / "keys" / "signing-config.json").resolve()
+
+
+# ============================================================
+# SBOM SIGNING
+# ============================================================
+def _sign_sbom(sbom_path: Path, bundle_path: Path):
+    env = dict(os.environ)
+
+    # optional — remove if you already export COSIGN_PASSWORD outside
+    # env["COSIGN_PASSWORD"] = "your-password"
+
+    result = subprocess.run(
+        [
+            "cosign",
+            "sign-blob",
+            str(sbom_path),
+            "--key",
+            str(COSIGN_PRIVATE_KEY),
+            "--signing-config",
+            str(COSIGN_SIGNING_CONFIG),
+            "--bundle",
+            str(bundle_path),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+    )
+
+    if result.returncode != 0:
+        raise Exception(f"Cosign signing failed: {result.stderr}")
+
+    if not bundle_path.exists():
+        raise Exception("Cosign did not generate bundle file")
+    
+def _verify_sbom_signature(sbom_path: Path, bundle_path: Path):
+    result = subprocess.run(
+        [
+            "cosign",
+            "verify-blob",
+            str(sbom_path),
+            "--key",
+            str(COSIGN_PUBLIC_KEY),
+            "--bundle",
+            str(bundle_path),
+            "--insecure-ignore-tlog=true",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+    if result.returncode != 0:
+        raise Exception(f"SBOM signature verification failed: {result.stderr}")
+
+    return True
 
 # -----------------------------
 # SBOM GENERATION (OPTIONAL)
@@ -29,7 +94,7 @@ def _run_syft(project_path: str, sbom_path: Path):
 # -----------------------------
 # GRYPE SCAN (stdout based)
 # -----------------------------
-def _run_grype(sbom_path: Path):
+def _run_grype(sbom_path: Path, output_path: Path):
     result = subprocess.run(
         ["grype", f"sbom:{sbom_path}", "-o", "json"],
         capture_output=True,
@@ -40,13 +105,15 @@ def _run_grype(sbom_path: Path):
     if result.returncode != 0:
         raise Exception(f"Grype failed: {result.stderr}")
 
+    output_path.write_text(result.stdout, encoding="utf-8")
+
     return json.loads(result.stdout)
 
 
 # -----------------------------
 # GRANT SCAN (stdout based)
 # -----------------------------
-def _run_grant(sbom_path: Path):
+def _run_grant(sbom_path: Path, output_path: Path):
     result = subprocess.run(
         ["grant", "list", str(sbom_path), "--output", "json"],
         capture_output=True,
@@ -57,8 +124,9 @@ def _run_grant(sbom_path: Path):
     if result.returncode != 0:
         raise Exception(f"Grant failed: {result.stderr}")
 
-    return json.loads(result.stdout)
+    output_path.write_text(result.stdout, encoding="utf-8")
 
+    return json.loads(result.stdout)
 
 # -----------------------------
 # SBOM FORMAT DETECTION
@@ -278,8 +346,197 @@ def _parse_grant_check_results(grant_output: dict, scan_id: str):
                 })
 
     return findings, risk_counts
+
 # -----------------------------
 # MAIN PIPELINE
+# -----------------------------
+def run_project_pipeline(project_path: str, scan_id: str, triggered_by=None):
+
+    vuln_db = SbomModel.findings_collection
+    license_db = SbomModel.licenses_findings_collection
+
+    # --------------------------------------------------------
+    # Output workspace
+    # --------------------------------------------------------
+    output_dir = Path("output") / str(scan_id)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Core artifacts
+    sbom_path = output_dir / "sbom-cyclonedx.json"
+    bundle_path = output_dir / "sbom.bundle.json"
+
+    # Tool outputs
+    grype_output_path = output_dir / "grype-report.json"
+    grant_output_path = output_dir / "grant-report.json"
+
+    # --------------------------------------------------------
+    # STEP 1 — Generate SBOM
+    # --------------------------------------------------------
+    try:
+        _run_syft(
+            project_path=project_path,
+            sbom_path=sbom_path,
+        )
+
+    except Exception as e:
+        raise Exception(f"SBOM generation failed: {e}")
+
+    # --------------------------------------------------------
+    # STEP 2 — Load generated SBOM
+    # --------------------------------------------------------
+    with open(sbom_path, encoding="utf-8") as f:
+        sbom = json.load(f)
+
+    dependencies_count = _count_dependencies(sbom)
+    ecosystems = _extract_ecosystems(sbom)
+
+    # --------------------------------------------------------
+    # STEP 3 — Sign + Verify
+    # --------------------------------------------------------
+    signing_status = {
+        "sbom_signed": False,
+        "verified": False,
+        "bundle_file": None,
+        "verified_at": None,
+        "signature_algorithm": "cosign",
+    }
+
+    try:
+        _sign_sbom(
+            sbom_path=sbom_path,
+            bundle_path=bundle_path,
+        )
+
+        _verify_sbom_signature(
+            sbom_path=sbom_path,
+            bundle_path=bundle_path,
+        )
+
+        signing_status = {
+            "sbom_signed": True,
+            "verified": True,
+            "bundle_file": str(bundle_path),
+            "verified_at": datetime.now(timezone.utc),
+            "signature_algorithm": "cosign",
+        }
+
+    except Exception as e:
+        raise Exception(f"SBOM signing/verification failed: {e}")
+
+    # Persist signing metadata
+    SbomModel.scans_collection.update_one(
+        {"_id": ObjectId(scan_id)},
+        {
+            "$set": {
+                "sbom_signing": signing_status,
+                "sbom_artifact": str(sbom_path),
+            }
+        }
+    )
+
+    # --------------------------------------------------------
+    # STEP 4 — Grype vulnerability scan
+    # --------------------------------------------------------
+    try:
+        grype_output = _run_grype(
+            sbom_path=sbom_path,
+            output_path=grype_output_path,
+        )
+
+        findings, severity_counts = _parse_grype_results(
+            grype_output,
+            scan_id,
+        )
+
+        if findings:
+            vuln_db.insert_many(findings)
+
+    except Exception as e:
+        severity_counts = defaultdict(int)
+        findings = []
+
+        print(f"Grype failed: {e}")
+
+    # --------------------------------------------------------
+    # STEP 5 — Grant license scan
+    # --------------------------------------------------------
+    try:
+        grant_output = _run_grant(
+            sbom_path=sbom_path,
+            output_path=grant_output_path,
+        )
+
+        if "run" in grant_output:
+            license_findings, risk_counts = _parse_grant_check_results(
+                grant_output=grant_output,
+                scan_id=scan_id,
+            )
+        else:
+            license_findings, risk_counts = _parse_grant_results(
+                grant_output=grant_output,
+                scan_id=scan_id,
+            )
+
+        if license_findings:
+            license_db.insert_many(license_findings)
+
+        SbomModel.scans_collection.update_one(
+            {"_id": ObjectId(scan_id)},
+            {
+                "$set": {
+                    "license_policy": grant_output.get("run", {}).get("policy", {}),
+                }
+            }
+        )
+
+    except Exception as e:
+        risk_counts = defaultdict(int)
+        license_findings = []
+
+        print(f"Grant failed: {e}")
+
+    # --------------------------------------------------------
+    # FINAL RESPONSE
+    # --------------------------------------------------------
+    return {
+        "dependencies_scanned": dependencies_count,
+
+        "total_vulnerabilities": len(findings),
+
+        "total_licenses": len(license_findings),
+
+        "severity_counts": {
+            "critical": severity_counts.get("critical", 0),
+            "high": severity_counts.get("high", 0),
+            "medium": severity_counts.get("medium", 0),
+            "low": severity_counts.get("low", 0),
+            "negligible": severity_counts.get("negligible", 0),
+        },
+
+        "license_risk_counts": {
+            "low": risk_counts.get("low", 0),
+            "medium": risk_counts.get("medium", 0),
+            "high": risk_counts.get("high", 0),
+        },
+
+        "ecosystems": ecosystems,
+
+        "sbom_signing": {
+            "signed": signing_status["sbom_signed"],
+            "verified": signing_status["verified"],
+        },
+
+        "artifacts": {
+            "sbom": str(sbom_path),
+            "bundle": str(bundle_path),
+            "grype_report": str(grype_output_path),
+            "grant_report": str(grant_output_path),
+        }
+    }
+
+
+# -----------------------------
+# SBOM UPLOAD PIPELINE
 # -----------------------------
 def run_sbom_pipeline(sbom_path: str, scan_id: str, triggered_by=None):
 
@@ -290,12 +547,17 @@ def run_sbom_pipeline(sbom_path: str, scan_id: str, triggered_by=None):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     normalized_sbom_path = output_dir / "normalized-sbom.json"
+    bundle_path = output_dir / "sbom.bundle.json"
+    grype_output_path = output_dir / "grype-report.json"
+    grant_output_path = output_dir / "grant-report.json"
 
+    # --------------------------------------------------------
     # Detect + normalize
+    # --------------------------------------------------------
     sbom_format = _detect_sbom_format(sbom_path)
 
     if sbom_format in ["syft-json", "cyclonedx-json", "spdx-json"]:
-        normalized_sbom_path = Path(sbom_path)
+        shutil.copy2(sbom_path, normalized_sbom_path)
     else:
         _convert_to_syft(sbom_path, normalized_sbom_path)
 
@@ -305,9 +567,57 @@ def run_sbom_pipeline(sbom_path: str, scan_id: str, triggered_by=None):
     dependencies_count = _count_dependencies(sbom)
     ecosystems = _extract_ecosystems(sbom)
 
-    # -------- GRYPE --------
+    # --------------------------------------------------------
+    # SIGN + VERIFY SBOM
+    # --------------------------------------------------------
+    signing_status = {
+        "sbom_signed": False,
+        "verified": False,
+        "bundle_file": None,
+        "verified_at": None,
+        "signature_algorithm": "cosign",
+    }
+
     try:
-        grype_output = _run_grype(normalized_sbom_path)
+        _sign_sbom(
+            sbom_path=normalized_sbom_path,
+            bundle_path=bundle_path,
+        )
+
+        _verify_sbom_signature(
+            sbom_path=normalized_sbom_path,
+            bundle_path=bundle_path,
+        )
+
+        signing_status = {
+            "sbom_signed": True,
+            "verified": True,
+            "bundle_file": str(bundle_path),
+            "verified_at": datetime.now(timezone.utc),
+            "signature_algorithm": "cosign",
+        }
+
+    except Exception as e:
+        raise Exception(f"SBOM signing/verification failed: {e}")
+
+    # Persist signing metadata early
+    SbomModel.scans_collection.update_one(
+        {"_id": ObjectId(scan_id)},
+        {
+            "$set": {
+                "sbom_signing": signing_status,
+            }
+        }
+    )
+
+    # --------------------------------------------------------
+    # GRYPE
+    # --------------------------------------------------------
+    try:
+        grype_output = _run_grype(
+            normalized_sbom_path,
+            grype_output_path,
+        )
         findings, severity_counts = _parse_grype_results(grype_output, scan_id)
 
         if findings:
@@ -318,13 +628,25 @@ def run_sbom_pipeline(sbom_path: str, scan_id: str, triggered_by=None):
         findings = []
         print(f"Grype failed: {e}")
 
-    # -------- GRANT --------
+    # --------------------------------------------------------
+    # GRANT
+    # --------------------------------------------------------
     try:
-        grant_output = _run_grant(normalized_sbom_path)
+        grant_output = _run_grant(
+            normalized_sbom_path,
+            grant_output_path,
+        )
+
         if "run" in grant_output:
-            license_findings, risk_counts = _parse_grant_check_results(grant_output=grant_output, scan_id=scan_id)
+            license_findings, risk_counts = _parse_grant_check_results(
+                grant_output=grant_output,
+                scan_id=scan_id,
+            )
         else:
-            license_findings, risk_counts = _parse_grant_results(grant_output=grant_output, scan_id=scan_id)
+            license_findings, risk_counts = _parse_grant_results(
+                grant_output=grant_output,
+                scan_id=scan_id,
+            )
 
         if license_findings:
             license_db.insert_many(license_findings)
@@ -334,7 +656,6 @@ def run_sbom_pipeline(sbom_path: str, scan_id: str, triggered_by=None):
             {
                 "$set": {
                     "license_policy": grant_output.get("run", {}).get("policy", {}),
-                    # "license_summary": evaluation.get("summary", {})
                 }
             }
         )
@@ -344,6 +665,9 @@ def run_sbom_pipeline(sbom_path: str, scan_id: str, triggered_by=None):
         license_findings = []
         print(f"Grant failed: {e}")
 
+    # --------------------------------------------------------
+    # RETURN
+    # --------------------------------------------------------
     return {
         "dependencies_scanned": dependencies_count,
         "total_vulnerabilities": len(findings),
@@ -364,4 +688,9 @@ def run_sbom_pipeline(sbom_path: str, scan_id: str, triggered_by=None):
         },
 
         "ecosystems": ecosystems,
+
+        "sbom_signing": {
+            "signed": signing_status["sbom_signed"],
+            "verified": signing_status["verified"],
+        },
     }

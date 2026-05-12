@@ -83,3 +83,6 @@ central_config.json
 
 # Output
 output/
+keys/
+*.key
+*.pub
