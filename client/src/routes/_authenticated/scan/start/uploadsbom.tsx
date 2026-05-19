@@ -8,12 +8,13 @@ import {
   SelectValue,
 } from '@/components/atomic/select';
 import { useProjectNames } from '@/hooks/use-project';
-import { useCreateScan } from '@/hooks/use-scans';
-import type { CreateScanDetails } from '@/types/scan';
+import { useSbomScan } from '@/hooks/use-scans';
+import type { CreateSBOMScanForm } from '@/types/scan';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import {
   AlertCircle,
   CheckCircle2,
+  FileJson,
   Play,
   Upload,
   X,
@@ -24,8 +25,9 @@ export const Route = createFileRoute('/_authenticated/scan/start/uploadsbom')({
   component: RouteComponent,
 });
 
+type FormErrors = Partial<CreateSBOMScanForm & { file_error: string }>;
 
-type FormErrors = Partial<Record<keyof CreateScanDetails | 'zip_error', string>>;
+// ── Shared sub-components (mirror of uploadsbom) ──────────────────────────────
 
 function StepBadge({ step }: { step: number }) {
   return (
@@ -39,7 +41,9 @@ function SectionHeading({ step, title }: { step: number; title: string }) {
   return (
     <div className="flex items-center gap-2.5 mb-4">
       <StepBadge step={step} />
-      <span className="text-[13px] font-medium text-gray-700 dark:text-gray-300">{title}</span>
+      <span className="text-[13px] font-medium text-gray-700 dark:text-gray-300">
+        {title}
+      </span>
       <div className="flex-1 border-t border-gray-100 dark:border-white/10" />
     </div>
   );
@@ -63,13 +67,15 @@ function ErrorText({ message }: { message?: string }) {
   );
 }
 
+// ── Main component ─────────────────────────────────────────────────────────────
+
 function RouteComponent() {
   const navigate = useNavigate();
-  const createScanMutation = useCreateScan();
+  const createScanMutation = useSbomScan();
 
-  const [formData, setFormData] = useState<CreateScanDetails>({
+  const [formData, setFormData] = useState<CreateSBOMScanForm>({
     scan_name: '',
-    zip_file: null,
+    file: null,
     project_id: '',
   });
 
@@ -88,18 +94,20 @@ function RouteComponent() {
     clearError(name);
   };
 
-  const handleProjectChange = (value: string) => {
+  const handleSelectChange = (value: string) => {
     setFormData(prev => ({ ...prev, project_id: value }));
     clearError('project_id');
   };
 
-
   const processFile = (file: File) => {
-    if (file.type === 'application/zip' || file.name.endsWith('.zip')) {
-      setFormData(prev => ({ ...prev, zip_file: file }));
-      clearError('zip_error');
+    if (file.type === 'application/json' || file.name.endsWith('.json')) {
+      setFormData(prev => ({ ...prev, file }));
+      clearError('file_error');
     } else {
-      setErrors(prev => ({ ...prev, zip_error: 'Only .zip files are accepted' }));
+      setErrors(prev => ({
+        ...prev,
+        file_error: 'Please upload a valid SBOM JSON file',
+      }));
     }
   };
 
@@ -126,13 +134,13 @@ function RouteComponent() {
   };
 
   const removeFile = () =>
-    setFormData(prev => ({ ...prev, zip_file: null }));
+    setFormData(prev => ({ ...prev, file: null }));
 
   const validateForm = (): boolean => {
     const newErrors: FormErrors = {};
     if (!formData.project_id) newErrors.project_id = 'Please select a project';
     if (!formData.scan_name.trim()) newErrors.scan_name = 'Scan name is required';
-    if (!formData.zip_file) newErrors.zip_error = 'Please upload a ZIP file';
+    if (!formData.file) newErrors.file_error = 'Please upload a valid SBOM JSON file';
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -145,12 +153,13 @@ function RouteComponent() {
       await createScanMutation.mutateAsync({
         scan_name: formData.scan_name,
         project_id: formData.project_id,
-        zip_file: formData.zip_file,
+        file: formData.file,
       });
       setSubmitted(true);
-      setFormData({ scan_name: '', project_id: '', zip_file: null });
+      const projectId = formData.project_id;
+      setFormData({ scan_name: '', project_id: '', file: null });
       setTimeout(() => {
-        navigate({ from: '/scan/start', to: `../../project/${formData.project_id}` });
+        navigate({ from: '/scan/start', to: `../../project/${projectId}` });
       }, 800);
     } catch (error) {
       console.error('Error creating scan:', error);
@@ -168,20 +177,20 @@ function RouteComponent() {
           {/* Page heading */}
           <div className="px-6">
             <h1 className="text-[22px] font-semibold text-gray-900 dark:text-white leading-tight">
-              Upload SBOM File
+              Start SBOM Scan
             </h1>
-            <p className="text-[14px] mt-1">
-              Upload your SBOM ZIP archive to start scanning.
+            <p className="text-[14px] text-gray-500 dark:text-gray-400 mt-1">
+              Upload your SBOM JSON file to begin vulnerability scanning.
             </p>
           </div>
 
-          {/* Card top accent bar */}
+          {/* Accent bar */}
           <div className="h-[3px] w-full bg-gradient-to-r from-[#bf0000] via-[#e03030] to-[#ff6060]" />
 
           <form onSubmit={handleSubmit} noValidate>
             <div className="px-7 py-6 space-y-7">
 
-              {/* ── Section 1 ── */}
+              {/* ── Section 1: Project & scan identity ── */}
               <section>
                 <SectionHeading step={1} title="Project & scan identity" />
 
@@ -190,7 +199,7 @@ function RouteComponent() {
                   {/* Project select */}
                   <div>
                     <FieldLabel>Project</FieldLabel>
-                    <Select value={formData.project_id} onValueChange={handleProjectChange}>
+                    <Select value={formData.project_id} onValueChange={handleSelectChange}>
                       <SelectTrigger
                         className={
                           errors.project_id
@@ -234,23 +243,22 @@ function RouteComponent() {
               {/* Divider */}
               <hr className="border-t border-gray-100 dark:border-white/[0.07]" />
 
-
-              {/* ── Section 3 ── */}
+              {/* ── Section 2: SBOM file upload ── */}
               <section>
-                <SectionHeading step={2} title="Upload archive" />
+                <SectionHeading step={2} title="Upload SBOM file" />
 
-                {formData.zip_file ? (
+                {formData.file ? (
                   /* File preview */
                   (<div className="flex items-center gap-3 p-3.5 rounded-xl border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/[0.02]">
                     <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-[#bf0000]/10 dark:bg-[#bf0000]/20 text-[#bf0000] flex-shrink-0">
-                      <Upload size={15} />
+                      <FileJson size={15} />
                     </span>
                     <div className="flex-1 min-w-0">
                       <p className="text-[13px] font-medium text-gray-800 dark:text-gray-100 truncate">
-                        {formData.zip_file.name}
+                        {formData.file.name}
                       </p>
                       <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
-                        {(formData.zip_file.size / (1024 * 1024)).toFixed(2)} MB &mdash; ZIP archive
+                        {(formData.file.size / (1024 * 1024)).toFixed(2)} MB &mdash; JSON file
                       </p>
                     </div>
                     <button
@@ -271,14 +279,14 @@ function RouteComponent() {
                       'relative rounded-xl border-2 border-dashed p-8 text-center transition-all duration-200 cursor-pointer group',
                       isDragOver
                         ? 'border-[#bf0000] bg-[#bf0000]/[0.03] dark:bg-[#bf0000]/[0.06]'
-                        : errors.zip_error
+                        : errors.file_error
                         ? 'border-red-400 bg-red-50 dark:bg-red-900/10'
                         : 'border-gray-200 dark:border-white/10 hover:border-gray-300 dark:hover:border-white/20 hover:bg-gray-50 dark:hover:bg-white/[0.02]',
                     ].join(' ')}
                   >
                     <input
                       type="file"
-                      accept=".zip"
+                      accept=".json"
                       onChange={handleFileChange}
                       className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                     />
@@ -293,19 +301,19 @@ function RouteComponent() {
                       <Upload size={17} />
                     </span>
                     <p className="text-[14px] font-medium text-gray-700 dark:text-gray-300">
-                      {isDragOver ? 'Drop it here' : 'Drag & drop your ZIP file'}
+                      {isDragOver ? 'Drop it here' : 'Drag & drop your SBOM file'}
                     </p>
                     <p className="text-[12px] text-gray-400 dark:text-gray-500 mt-1">
                       or{' '}
                       <span className="text-[#bf0000] dark:text-red-400 underline underline-offset-2 decoration-dotted">
                         browse files
                       </span>{' '}
-                      &mdash; .zip only, up to 500 MB
+                      &mdash; .json only
                     </p>
                   </div>)
                 )}
 
-                <ErrorText message={errors.zip_error} />
+                <ErrorText message={errors.file_error} />
               </section>
             </div>
 
@@ -373,3 +381,5 @@ function RouteComponent() {
     </div>
   )
 }
+
+export default RouteComponent;
