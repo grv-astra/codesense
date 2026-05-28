@@ -6,35 +6,25 @@ from datetime import datetime, timezone
 from pathlib import Path
 import shutil
 from local.api_app.models.sbom_models import SbomModel
-
-# ============================================================
-# COSIGN CONFIG
-# ============================================================
-BASE_DIR = Path(__file__).resolve().parent
-
-COSIGN_PRIVATE_KEY = (BASE_DIR / ".." / ".." / "keys" / "cosign.key").resolve()
-COSIGN_PUBLIC_KEY = (BASE_DIR / ".." / ".." / "keys" / "cosign.pub").resolve()
-COSIGN_SIGNING_CONFIG = (BASE_DIR / ".." / ".." / "keys" / "signing-config.json").resolve()
+from scanner.services.tools import tool_path, grype_offline_env, cosign_paths
 
 
 # ============================================================
 # SBOM SIGNING
 # ============================================================
 def _sign_sbom(sbom_path: Path, bundle_path: Path):
+    private_key, _public_key, signing_config = cosign_paths()
     env = dict(os.environ)
-
-    # optional — remove if you already export COSIGN_PASSWORD outside
-    # env["COSIGN_PASSWORD"] = "your-password"
 
     result = subprocess.run(
         [
-            "cosign",
+            tool_path("cosign"),
             "sign-blob",
             str(sbom_path),
             "--key",
-            str(COSIGN_PRIVATE_KEY),
+            private_key,
             "--signing-config",
-            str(COSIGN_SIGNING_CONFIG),
+            signing_config,
             "--bundle",
             str(bundle_path),
         ],
@@ -51,13 +41,14 @@ def _sign_sbom(sbom_path: Path, bundle_path: Path):
         raise Exception("Cosign did not generate bundle file")
     
 def _verify_sbom_signature(sbom_path: Path, bundle_path: Path):
+    _private_key, public_key, _signing_config = cosign_paths()
     result = subprocess.run(
         [
-            "cosign",
+            tool_path("cosign"),
             "verify-blob",
             str(sbom_path),
             "--key",
-            str(COSIGN_PUBLIC_KEY),
+            public_key,
             "--bundle",
             str(bundle_path),
             "--insecure-ignore-tlog=true",
@@ -77,10 +68,11 @@ def _verify_sbom_signature(sbom_path: Path, bundle_path: Path):
 # -----------------------------
 def _run_syft(project_path: str, sbom_path: Path):
     result = subprocess.run(
-        ["syft", f"dir:{project_path}", "-o", f"cyclonedx-json={sbom_path}"],
+        [tool_path("syft"), f"dir:{project_path}", "-o", f"cyclonedx-json={sbom_path}"],
         capture_output=True,
         text=True,
-        encoding="utf-8"
+        encoding="utf-8",
+        env=grype_offline_env(),
     )
 
     if result.returncode != 0:
@@ -95,10 +87,11 @@ def _run_syft(project_path: str, sbom_path: Path):
 # -----------------------------
 def _run_grype(sbom_path: Path, output_path: Path):
     result = subprocess.run(
-        ["grype", f"sbom:{sbom_path}", "-o", "json"],
+        [tool_path("grype"), f"sbom:{sbom_path}", "-o", "json"],
         capture_output=True,
         text=True,
-        encoding="utf-8"
+        encoding="utf-8",
+        env=grype_offline_env(),
     )
 
     if result.returncode != 0:
@@ -114,10 +107,11 @@ def _run_grype(sbom_path: Path, output_path: Path):
 # -----------------------------
 def _run_grant(sbom_path: Path, output_path: Path):
     result = subprocess.run(
-        ["grant", "list", str(sbom_path), "--output", "json"],
+        [tool_path("grant"), "list", str(sbom_path), "--output", "json"],
         capture_output=True,
         text=True,
-        encoding="utf-8"
+        encoding="utf-8",
+        env=grype_offline_env(),
     )
 
     if result.returncode != 0:
@@ -165,7 +159,7 @@ def _normalize_risk(risk: str):
 # -----------------------------
 def _convert_to_syft(input_path: str, output_path: str):
     subprocess.run(
-        ["syft", "convert", input_path, "-o", f"json={str(output_path)}"],
+        [tool_path("syft"), "convert", input_path, "-o", f"json={str(output_path)}"],
         check=True
     )
 
