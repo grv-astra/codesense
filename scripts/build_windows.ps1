@@ -188,5 +188,5 @@ Info "Build complete"
 if (Test-Path $bundle) {
   Get-ChildItem $bundle -Filter *.exe | ForEach-Object { Ok "Installer: $($_.FullName)" }
 } else {
-  Write-Warning "NSIS bundle dir not found at $bundle — check the Tauri build output above."
+  Write-Warning "NSIS bundle dir not found at $bundle - check the Tauri build output above."
 }
