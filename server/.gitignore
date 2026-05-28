@@ -27,8 +27,8 @@ staticfiles/
 *.mo
 
 # Django migrations
-**/migrations/
-!*/migrations/__init__.py
+# NOTE: migrations are now TRACKED — the SQLite ORM schema is source of truth.
+# (Previously ignored when this project used MongoDB and had no real migrations.)
 
 # Coverage reports
 htmlcov/
