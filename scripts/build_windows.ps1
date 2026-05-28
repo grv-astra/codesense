@@ -6,27 +6,26 @@
 .DESCRIPTION
   Automates BUILD.md end-to-end on a Windows host:
     1. Freezes the Django backend into codesense-server.exe (PyInstaller).
-    2. Downloads the SBOM toolchain (Syft/Grype/Grant/Cosign).
+    2. Downloads the SBOM toolchain (Syft/Grype/Grant/Cosign) - latest releases.
     3. Snapshots the Grype vulnerability DB for offline use.
     4. Stages every artifact into the Tauri bundle layout.
     5. Builds the NSIS installer.
 
   The two heavy AI inputs cannot be produced by this script (they need a built
-  llama.cpp + the 6 GB model), so pass them in:
-    -ModelGguf    the quantized GGUF  (scripts/offline_ai/convert_model_to_gguf.sh)
-    -LlamaServer  llama-server.exe    (a llama.cpp release)
+  llama.cpp + the model), so pass them in:
+    -ModelGguf    the quantized GGUF  (e.g. astra-q8_0.gguf)
+    -LlamaServer  llama-server.exe    (a llama.cpp Windows release)
 
-.PARAMETER ModelGguf   Path to astra-Q4_K_M.gguf.
+.PARAMETER ModelGguf   Path to the GGUF model file (copied into the bundle as astra.gguf).
 .PARAMETER LlamaServer Path to llama-server.exe.
-.PARAMETER WebView2    Path to a fixed-version WebView2 runtime folder (for fully-offline install).
-.PARAMETER IconLogo    Optional square PNG; if given, app icons are generated with the Tauri CLI.
+.PARAMETER WebView2    Path to a fixed-version WebView2 runtime folder (for a fully-offline installer).
+.PARAMETER IconLogo    Square PNG used to generate app icons; defaults to client\public\CSlogo.png.
 .PARAMETER SkipTools   Skip downloading the SBOM tools (use what's already staged).
 
 .EXAMPLE
   .\scripts\build_windows.ps1 `
-     -ModelGguf .\dist\model\astra-Q4_K_M.gguf `
-     -LlamaServer C:\llama.cpp\build\bin\llama-server.exe `
-     -WebView2 C:\webview2-fixed\ `
+     -ModelGguf .\ai-artifacts\astra-q8_0.gguf `
+     -LlamaServer .\ai-artifacts\llama-server.exe `
      -IconLogo .\client\public\CSlogo.png
 #>
 [CmdletBinding()]
@@ -35,32 +34,29 @@ param(
   [string]$LlamaServer,
   [string]$WebView2,
   [string]$IconLogo,
-  [switch]$SkipTools,
-  [string]$SyftVersion   = "1.18.1",
-  [string]$GrypeVersion  = "0.85.0",
-  [string]$GrantVersion  = "0.2.4",
-  [string]$CosignVersion = "2.4.1"
+  [switch]$SkipTools
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # --------------------------------------------------------------------------- #
 # Paths + helpers
 # --------------------------------------------------------------------------- #
-$RepoRoot  = Split-Path -Parent $PSScriptRoot
-$Server    = Join-Path $RepoRoot "server"
-$Client    = Join-Path $RepoRoot "client"
-$Tauri     = Join-Path $Client "src-tauri"
-$BinDir    = Join-Path $Tauri "binaries"
-$ResTools  = Join-Path $Tauri "resources\tools"
-$ResModel  = Join-Path $Tauri "resources\model"
-$ResGrypeDb= Join-Path $Tauri "resources\grype-db"
-$Wv2Dir    = Join-Path $Tauri "webview2"
+$RepoRoot   = Split-Path -Parent $PSScriptRoot
+$Server     = Join-Path $RepoRoot "server"
+$Client     = Join-Path $RepoRoot "client"
+$Tauri      = Join-Path $Client "src-tauri"
+$BinDir     = Join-Path $Tauri "binaries"
+$ResTools   = Join-Path $Tauri "resources\tools"
+$ResModel   = Join-Path $Tauri "resources\model"
+$ResGrypeDb = Join-Path $Tauri "resources\grype-db"
+$Wv2Dir     = Join-Path $Tauri "webview2"
 
-function Info($m)  { Write-Host "==> $m" -ForegroundColor Cyan }
-function Ok($m)    { Write-Host "    $m" -ForegroundColor Green }
-function Die($m)   { Write-Error $m; exit 1 }
+function Info($m) { Write-Host "==> $m" -ForegroundColor Cyan }
+function Ok($m)   { Write-Host "    $m" -ForegroundColor Green }
+function Die($m)  { Write-Host "ERROR: $m" -ForegroundColor Red; exit 1 }
 
 function Assert-Cmd($name, $hint) {
   if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
@@ -70,15 +66,24 @@ function Assert-Cmd($name, $hint) {
 
 function Ensure-Dir($p) { if (-not (Test-Path $p)) { New-Item -ItemType Directory -Force -Path $p | Out-Null } }
 
+# Run a native command and stop the build if it returns a non-zero exit code
+# ($ErrorActionPreference='Stop' does NOT catch native exit codes).
+function Invoke-Native([scriptblock]$Cmd, [string]$What) {
+  & $Cmd
+  if ($LASTEXITCODE -ne 0) { Die "$What failed (exit code $LASTEXITCODE)." }
+}
+
 # --------------------------------------------------------------------------- #
 # 0. Prerequisites
 # --------------------------------------------------------------------------- #
 Info "Checking prerequisites"
-Assert-Cmd python "Install Python 3.11+ from python.org."
+Assert-Cmd python "Install Python 3.11+ from python.org (add to PATH)."
 Assert-Cmd npm    "Install Node.js LTS from nodejs.org."
 Assert-Cmd cargo  "Install Rust from rustup.rs."
 Assert-Cmd rustc  "Install Rust from rustup.rs."
-$Triple = ((& rustc -Vv) | Select-String '^host:').ToString().Split(' ')[-1].Trim()
+$hostLine = (& rustc -Vv | Select-String '^host:' | Select-Object -First 1)
+if (-not $hostLine) { Die "Could not determine the Rust host triple from 'rustc -Vv'." }
+$Triple = $hostLine.ToString().Split(' ')[-1].Trim()
 Ok "Rust target triple: $Triple"
 Ensure-Dir $BinDir; Ensure-Dir $ResTools; Ensure-Dir $ResModel; Ensure-Dir $ResGrypeDb
 
@@ -88,10 +93,10 @@ Ensure-Dir $BinDir; Ensure-Dir $ResTools; Ensure-Dir $ResModel; Ensure-Dir $ResG
 Info "Building backend executable (PyInstaller)"
 Push-Location $Server
 try {
-  if (-not (Test-Path ".venv")) { python -m venv .venv }
-  & .\.venv\Scripts\python.exe -m pip install --upgrade pip --quiet
-  & .\.venv\Scripts\pip.exe install -r requirements.txt pyinstaller --quiet
-  & .\.venv\Scripts\pyinstaller.exe codesense.spec --noconfirm --clean
+  if (-not (Test-Path ".venv")) { Invoke-Native { python -m venv .venv } "venv creation" }
+  Invoke-Native { & .\.venv\Scripts\python.exe -m pip install --upgrade pip --quiet } "pip upgrade"
+  Invoke-Native { & .\.venv\Scripts\pip.exe install -r requirements.txt pyinstaller --quiet } "pip install"
+  Invoke-Native { & .\.venv\Scripts\pyinstaller.exe codesense.spec --noconfirm --clean } "PyInstaller"
   $built = Join-Path $Server "dist\codesense-server.exe"
   if (-not (Test-Path $built)) { Die "PyInstaller did not produce dist\codesense-server.exe" }
   Copy-Item $built (Join-Path $BinDir "codesense-server-$Triple.exe") -Force
@@ -113,17 +118,16 @@ Ok "llama-server-$Triple.exe staged"
 # --------------------------------------------------------------------------- #
 Info "Staging model GGUF"
 if (-not $ModelGguf -or -not (Test-Path $ModelGguf)) {
-  Die "Pass -ModelGguf <path to astra-Q4_K_M.gguf> (see scripts/offline_ai/)."
+  Die "Pass -ModelGguf <path to the .gguf model> (see scripts/offline_ai/)."
 }
 Copy-Item $ModelGguf (Join-Path $ResModel "astra.gguf") -Force
-Ok "astra-Q4_K_M.gguf staged"
+Ok "model staged as resources\model\astra.gguf"
 
 # --------------------------------------------------------------------------- #
-# 4. SBOM tools (Syft / Grype / Grant / Cosign)
+# 4. SBOM tools (Syft / Grype / Grant / Cosign) - latest releases via GitHub API
 # --------------------------------------------------------------------------- #
 if (-not $SkipTools) {
   Info "Downloading SBOM tools (latest windows_amd64 releases)"
-  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
   $tmp = Join-Path $env:TEMP ("cs-tools-" + [guid]::NewGuid())
   Ensure-Dir $tmp
 
@@ -157,7 +161,11 @@ $grypeExe = Join-Path $ResTools "grype.exe"
 if (Test-Path $grypeExe) {
   $env:GRYPE_DB_CACHE_DIR = $ResGrypeDb
   & $grypeExe db update
-  Ok "Grype DB snapshot in resources\grype-db (frozen; AUTO_UPDATE off at runtime)"
+  if ($LASTEXITCODE -ne 0) {
+    Write-Warning "grype db update returned $LASTEXITCODE; the bundled CVE DB may be empty/stale."
+  } else {
+    Ok "Grype DB snapshot in resources\grype-db (frozen; AUTO_UPDATE off at runtime)"
+  }
 } else {
   Write-Warning "grype.exe not staged; skipping DB snapshot. Re-run without -SkipTools."
 }
@@ -170,10 +178,9 @@ if ($WebView2 -and (Test-Path $WebView2)) {
   Ensure-Dir $Wv2Dir
   Copy-Item (Join-Path $WebView2 "*") $Wv2Dir -Recurse -Force
   Ok "WebView2 runtime staged"
-} else {
-  Write-Warning "No -WebView2 provided. For a guaranteed-offline installer, stage a fixed-version runtime into src-tauri\webview2\ (see src-tauri\README.md)."
 }
 
+# Default the icon source to a bundled logo so the Tauri build isn't blocked.
 if (-not $IconLogo) {
   foreach ($cand in @("client\public\CSlogo.png", "client\public\logoCS.png")) {
     $p = Join-Path $RepoRoot $cand
@@ -183,20 +190,34 @@ if (-not $IconLogo) {
 if ($IconLogo -and (Test-Path $IconLogo)) {
   Info "Generating app icons from $IconLogo"
   Push-Location $Client
-  try { npx --yes @tauri-apps/cli icon $IconLogo } finally { Pop-Location }
+  try { Invoke-Native { npx --yes @tauri-apps/cli icon $IconLogo } "Tauri icon generation" }
+  finally { Pop-Location }
   Ok "Icons generated into src-tauri\icons"
 } else {
   Write-Warning "No icon source found; the Tauri build needs src-tauri\icons. Pass -IconLogo <square PNG>."
 }
 
 # --------------------------------------------------------------------------- #
-# 7. Frontend + Tauri installer
+# 7. Fail fast if WebView2 fixed runtime is required but missing
 # --------------------------------------------------------------------------- #
-Info "Building the Tauri installer"
+$wv2HasFiles = (Test-Path $Wv2Dir) -and (@(Get-ChildItem $Wv2Dir -Force -ErrorAction SilentlyContinue).Count -gt 0)
+$confJson = Join-Path $Tauri "tauri.conf.json"
+if (-not $wv2HasFiles -and (Test-Path $confJson) -and (Select-String -Path $confJson -Pattern 'fixedRuntime' -Quiet)) {
+  Write-Host "ERROR: tauri.conf.json requests a FIXED WebView2 runtime but src-tauri\webview2\ is empty." -ForegroundColor Red
+  Write-Host "  Offline installer: re-run with -WebView2 <fixed-version-runtime-folder>" -ForegroundColor Yellow
+  Write-Host "  Online installer : set webviewInstallMode.type to 'downloadBootstrapper' in" -ForegroundColor Yellow
+  Write-Host "                     client\src-tauri\tauri.conf.json (and remove the 'path' line)." -ForegroundColor Yellow
+  exit 1
+}
+
+# --------------------------------------------------------------------------- #
+# 8. Frontend + Tauri installer
+# --------------------------------------------------------------------------- #
+Info "Building the Tauri installer (this compiles Rust + bundles - can take several minutes)"
 Push-Location $Client
 try {
-  npm install
-  npx --yes @tauri-apps/cli build
+  Invoke-Native { npm install } "npm install"
+  Invoke-Native { npx --yes @tauri-apps/cli build } "Tauri build"
 } finally { Pop-Location }
 
 $bundle = Join-Path $Tauri "target\release\bundle\nsis"
