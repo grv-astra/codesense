@@ -13,10 +13,3 @@ def save_findings_to_db(findings):
             collection.insert_many(findings)
         except Exception as e:
             logging.error(f"Error saving findings to database: {e}")
-
-def get_severity_counts(scan_id):
-    pipeline = [
-        {"$match": {"scan_id": scan_id}},
-        {"$group": {"_id": "$severity", "count": {"$sum": 1}}}
-    ]
-    return list(collection.aggregate(pipeline))
