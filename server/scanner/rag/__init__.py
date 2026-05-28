@@ -14,5 +14,5 @@ logging.basicConfig(
 )
 
 # Reduce noise from third-party libs
-for logger_name in ["langchain", "langchain_community", "pymongo", "faiss", "urllib3", "requests"]:
+for logger_name in ["pymongo", "urllib3", "requests"]:
     logging.getLogger(logger_name).setLevel(logging.ERROR)
