@@ -40,7 +40,7 @@ fn spawn_backend(app: &tauri::AppHandle) -> Option<CommandChild> {
     let keys_dir = data_dir.join("keys");
     let tools_dir = app
         .path()
-        .resolve("binaries", BaseDirectory::Resource)
+        .resolve("resources/tools", BaseDirectory::Resource)
         .unwrap_or_default();
     let grype_db = app
         .path()

@@ -22,6 +22,23 @@ inside a Tauri shell.
 - **P7** Prod settings (DEBUG off, generated SECRET_KEY, locked ALLOWED_HOSTS/CORS);
   `server/run_server.py` (waitress entrypoint, verified) + PyInstaller spec.
 
+## Quick build (one command)
+
+On a Windows host with Rust, Node, and Python installed, after producing the
+GGUF model (step 2 below) and obtaining `llama-server.exe`:
+
+```powershell
+.\scripts\build_windows.ps1 `
+   -ModelGguf .\dist\model\astra-Q4_K_M.gguf `
+   -LlamaServer C:\llama.cpp\build\bin\llama-server.exe `
+   -WebView2 C:\webview2-fixed\ `
+   -IconLogo .\client\public\CSlogo.png
+```
+
+`build_windows.ps1` freezes the backend, downloads the SBOM toolchain, snapshots
+the Grype DB, stages everything into the Tauri bundle, and builds the NSIS
+installer. The manual breakdown of what it does is below.
+
 ## Build steps
 
 ### 1. Backend → single exe (PyInstaller)
