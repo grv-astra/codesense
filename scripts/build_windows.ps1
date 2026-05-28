@@ -115,7 +115,7 @@ Info "Staging model GGUF"
 if (-not $ModelGguf -or -not (Test-Path $ModelGguf)) {
   Die "Pass -ModelGguf <path to astra-Q4_K_M.gguf> (see scripts/offline_ai/)."
 }
-Copy-Item $ModelGguf (Join-Path $ResModel "astra-Q4_K_M.gguf") -Force
+Copy-Item $ModelGguf (Join-Path $ResModel "astra.gguf") -Force
 Ok "astra-Q4_K_M.gguf staged"
 
 # --------------------------------------------------------------------------- #

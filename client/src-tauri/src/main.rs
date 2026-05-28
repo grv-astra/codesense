@@ -84,7 +84,7 @@ fn spawn_backend(app: &tauri::AppHandle) -> Option<CommandChild> {
 fn spawn_llama(app: &tauri::AppHandle) -> Option<CommandChild> {
     let model = app
         .path()
-        .resolve("resources/model/astra-Q4_K_M.gguf", BaseDirectory::Resource)
+        .resolve("resources/model/astra.gguf", BaseDirectory::Resource)
         .ok()?;
     let cmd = app
         .shell()
