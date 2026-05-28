@@ -18,17 +18,31 @@ load_dotenv()
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Per-user writable data directory (overridable by the desktop launcher).
+DATA_DIR = Path(os.getenv("CODESENSE_DATA_DIR", BASE_DIR / "data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
+# Off by default for the packaged app; opt in with DJANGO_DEBUG=true in dev.
+DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() == "true"
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-eab2hbcc83o#a++fva&32nwku+4_5!@e8(gp@g!gk(5v33ga(9'
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+def _load_or_create_secret_key() -> str:
+    """Use DJANGO_SECRET_KEY if set, else a per-install key persisted in DATA_DIR."""
+    env_key = os.getenv("DJANGO_SECRET_KEY")
+    if env_key:
+        return env_key
+    key_file = DATA_DIR / "secret_key"
+    if key_file.exists():
+        return key_file.read_text(encoding="utf-8").strip()
+    from django.core.management.utils import get_random_secret_key
+    key = get_random_secret_key()
+    key_file.write_text(key, encoding="utf-8")
+    return key
 
-ALLOWED_HOSTS = ['*']
+
+SECRET_KEY = _load_or_create_secret_key()
+
+ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
 
 
 # Application definition
@@ -82,10 +96,6 @@ WSGI_APPLICATION = 'codesense.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-# Per-user writable data directory (overridable by the desktop launcher).
-DATA_DIR = Path(os.getenv("CODESENSE_DATA_DIR", BASE_DIR / "data"))
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
@@ -93,8 +103,18 @@ DATABASES = {
     }
 }
 
-CORS_ALLOW_ALL_ORIGINS = True
+# Loopback desktop app: the Tauri webview origin is tauri://localhost (on Windows
+# http(s)://tauri.localhost). Allow those + the dev server; allow-all only in DEBUG.
+CORS_ALLOW_ALL_ORIGINS = DEBUG
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_ORIGINS = [
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8585",
+    "http://127.0.0.1:8585",
+]
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
