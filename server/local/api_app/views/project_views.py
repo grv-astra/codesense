@@ -2,8 +2,6 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from bson import ObjectId
-
 from ..models.project_models import ProjectModel
 from ..serializers.project_serializers import ProjectCreateSerializer, ProjectUpdateSerializer
 from local.auth_app.permissions.decorators import require_permission
@@ -23,7 +21,7 @@ class ProjectListCreateView(APIView):
         if serializer.is_valid():
             user = request.user
             user_id = user.get("id", "")    # Assuming user is authenticated
-            project = ProjectModel.create({**serializer.validated_data, "created_by": ObjectId(user_id)})
+            project = ProjectModel.create({**serializer.validated_data, "created_by": user_id})
             return Response(project, status=status.HTTP_201_CREATED)
         return Response({ "error": serializer.errors }, status=status.HTTP_400_BAD_REQUEST)
 
