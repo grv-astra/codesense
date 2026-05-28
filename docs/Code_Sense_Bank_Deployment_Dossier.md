@@ -3,7 +3,8 @@
 **Prepared for:** Bank Information Security / Vendor Risk / Endpoint Engineering
 **Product:** Code Sense — offline AI code-review & SBOM/SCA scanner (desktop)
 **Deployment model:** Single self-contained Windows desktop application, fully offline
-**Document version:** 1.0 · **Date:** 2026-05-28 · **Classification:** Confidential
+**Document version:** 1.4 · **Date:** 2026-05-28 · **Classification:** Confidential
+**Revision:** v1.4 — issued for bank security / vendor-risk review.
 
 > Items marked **[VERIFY]** require confirmation by the vendor before sign-off (e.g.,
 > model licensing, code-signing certificate, final build artifact hashes). They are
