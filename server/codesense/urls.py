@@ -17,9 +17,12 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 
+from licenses.views import LicenseStatusView
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/auth/', include('local.auth_app.urls')),
+    path('api/license/', LicenseStatusView.as_view()),
     path('api/', include('local.api_app.urls')),
 ]
 

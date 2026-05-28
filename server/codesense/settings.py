@@ -56,6 +56,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'licenses.middleware.ReadOnlyGraceMiddleware',
 ]
 
 ROOT_URLCONF = 'codesense.urls'
@@ -146,6 +147,10 @@ STATIC_URL = 'static/'
 
 CENTRAL_URL = os.getenv("CENTRAL_URL")
 LOCAL_KEYS_DIR = os.getenv("LOCAL_KEYS_DIR")
+
+# Offline license (Phase 4): self-contained, runs N days from first launch.
+LICENSE_DURATION_DAYS = int(os.getenv("LICENSE_DURATION_DAYS", "90"))
+LICENSE_SECRET = os.getenv("LICENSE_SECRET")  # build-injected; dev falls back to a constant
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

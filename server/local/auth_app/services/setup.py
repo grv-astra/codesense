@@ -24,4 +24,7 @@ def create_initial_admin(email: str, password: str, name: str, company: str = No
         name=name, company=company, role="Admin",
     )
     _seed_default_permissions()
+    # Start the offline license clock at first-run setup.
+    from licenses.services.offline_license import get_state
+    get_state()
     return admin
