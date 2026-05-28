@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from bson import ObjectId
 import logging
 import re
 import uuid
@@ -240,7 +239,7 @@ def extract_relevant_info(llm_output, file_name, scan_id, triggered_by, file_con
                 )
  
                 vulnerability = {
-                    "scan_id": ObjectId(scan_id),
+                    "scan_id": scan_id,
                     "cwe": cwe or "CWE-Unknown",
                     "cvss_vector": cvss_vector,
                     "cvss_score": cvss_score,
@@ -259,7 +258,7 @@ def extract_relevant_info(llm_output, file_name, scan_id, triggered_by, file_con
                     "approved": False,
                     "reference": reference_link,
                     "created_at": datetime.now(timezone.utc),
-                    "created_by": ObjectId(triggered_by),
+                    "created_by": triggered_by,
                     # Optional: add explicit numeric lines array for your DB if you want true "array form"
                     "lines": [start_line, end_line],
                     "affected": affected
