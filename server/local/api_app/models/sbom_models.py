@@ -1,332 +1,200 @@
-from bson import ObjectId
 from datetime import datetime, timezone
-from common.db import MongoDBClient
+from local.api_app.models.orm import SbomScan, SbomFinding, SbomLicenseFinding
+
+_FINDING_FIELDS = ["scan_id", "package_name", "package_version", "package_type",
+                   "cve_id", "severity", "description", "cvss", "fix_versions", "created_at"]
+_LICENSE_FIELDS = ["scan_id", "package_name", "package_version", "package_type",
+                   "license", "decision", "locations", "created_at"]
+
+
+def _iso(dt):
+    return dt.isoformat() if dt else None
 
 
 class SbomModel:
-    scans_collection = MongoDBClient.get_database()["sbom_scans"]
-    findings_collection = MongoDBClient.get_database()["sbom_findings"]
-    licenses_findings_collection = MongoDBClient.get_database()["sbom_licenses_findings"]
-    
     @staticmethod
     def serialize(scan):
-        if not scan:
+        if scan is None:
             return None
-
         return {
-            "id": str(scan["_id"]),
-            "project_id": str(scan["project_id"]),
-            "scan_name": scan.get("scan_name", ""),
-
-            "status": scan.get("status", "queued"),
-
-            "created_at": scan["created_at"].isoformat()
-            if scan.get("created_at")
-            else None,
-
-            "triggered_by": str(scan.get("triggered_by", "")),
-            "dependencies_scanned": scan.get("dependencies_scanned", 0),
-
-            "vulnerabilities": scan.get("vulnerabilities", 0),
-
-            "severity_counts": scan.get(
-                "severity_counts",
-                {
-                    "critical": 0,
-                    "high": 0,
-                    "medium": 0,
-                    "low": 0,
-                    "negligible": 0,
-                },
-            ),
-
-            "ecosystems": scan.get("ecosystems", []),
-
-            "sbom_format": scan.get("sbom_format", "syft-json"),
-
-            "end_time": scan["end_time"].isoformat()
-            if scan.get("end_time")
-            else None,
+            "id": str(scan.id),
+            "project_id": str(scan.project_id),
+            "scan_name": scan.scan_name or "",
+            "status": scan.status or "queued",
+            "created_at": _iso(scan.created_at),
+            "triggered_by": str(scan.triggered_by or ""),
+            "dependencies_scanned": scan.dependencies_scanned,
+            "vulnerabilities": scan.vulnerabilities,
+            "severity_counts": scan.severity_counts,
+            "ecosystems": scan.ecosystems,
+            "sbom_format": scan.sbom_format or "syft-json",
+            "end_time": _iso(scan.end_time),
         }
 
     @staticmethod
-    def finding_serialize(finding):
-        if not finding:
+    def finding_serialize(f):
+        if f is None:
             return None
-
+        cvss = [
+            {
+                "type": c.get("type"), "version": c.get("version"), "vector": c.get("vector"),
+                "base_score": c.get("metrics", {}).get("baseScore"),
+                "exploitability_score": c.get("metrics", {}).get("exploitabilityScore"),
+                "impact_score": c.get("metrics", {}).get("impactScore"),
+            }
+            for c in (f.cvss or [])
+        ]
         return {
-            "id": str(finding.get("_id", "")),
-
-            "scan_id": str(finding.get("scan_id", "")),
-
-            "package": {
-                "name": finding.get("package_name", ""),
-                "version": finding.get("package_version", ""),
-                "type": finding.get("package_type", ""),
-            },
-
-            "cve_id": finding.get("cve_id", ""),
-
-            "severity": finding.get("severity", "").lower(),
-
-            "description": finding.get("description", ""),
-
-            "cvss": [
-                {
-                    "type": cvss.get("type"),
-                    "version": cvss.get("version"),
-                    "vector": cvss.get("vector"),
-                    "base_score": cvss.get("metrics", {}).get("baseScore"),
-                    "exploitability_score": cvss.get("metrics", {}).get("exploitabilityScore"),
-                    "impact_score": cvss.get("metrics", {}).get("impactScore"),
-                }
-                for cvss in finding.get("cvss", [])
-            ],
-
-            # convenience field (helps frontend avoid parsing array)
-            "cvss_score": (
-                finding.get("cvss", [{}])[0]
-                .get("metrics", {})
-                .get("baseScore")
-                if finding.get("cvss")
-                else None
-            ),
-
-            "fix_versions": finding.get("fix_versions", []),
-
-            "created_at": (
-                finding["created_at"].isoformat()
-                if finding.get("created_at")
-                else None
-            ),
+            "id": str(f.id),
+            "scan_id": str(f.scan_id),
+            "package": {"name": f.package_name or "", "version": f.package_version or "",
+                        "type": f.package_type or ""},
+            "cve_id": f.cve_id or "",
+            "severity": (f.severity or "").lower(),
+            "description": f.description or "",
+            "cvss": cvss,
+            "cvss_score": (f.cvss[0].get("metrics", {}).get("baseScore") if f.cvss else None),
+            "fix_versions": f.fix_versions or [],
+            "created_at": _iso(f.created_at),
         }
-    
+
     @staticmethod
-    def license_finding_serialize(finding):
-        if not finding:
+    def license_finding_serialize(f):
+        if f is None:
             return None
-
+        lic = f.license or {}
         return {
-            "id": str(finding.get("_id", "")),
-
-            "scan_id": str(finding.get("scan_id", "")),
-
-            "package": {
-                "name": finding.get("package_name", ""),
-                "version": finding.get("package_version", ""),
-                "type": finding.get("package_type", ""),
-            },
-
+            "id": str(f.id),
+            "scan_id": str(f.scan_id),
+            "package": {"name": f.package_name or "", "version": f.package_version or "",
+                        "type": f.package_type or ""},
             "license": {
-                "id": finding.get("license", {}).get("id"),
-                "reference": finding.get("license", {}).get("reference"),
-                "osi_approved": finding.get("license", {}).get("osi_approved"),
-                "risk_category": finding.get("license", {}).get("risk_category"),
-                "risk_level": finding.get("license", {}).get("risk_level"),
+                "id": lic.get("id"), "reference": lic.get("reference"),
+                "osi_approved": lic.get("osi_approved"),
+                "risk_category": lic.get("risk_category"), "risk_level": lic.get("risk_level"),
             },
-
-            "decision": finding.get("decision", ""),
-
-            "locations": finding.get("locations", []),
-
-            "created_at": (
-                finding["created_at"].isoformat()
-                if finding.get("created_at")
-                else None
-            ),
+            "decision": f.decision or "",
+            "locations": f.locations or [],
+            "created_at": _iso(f.created_at),
         }
 
     @classmethod
     def create(cls, data: dict):
-        data["project_id"] = (
-            ObjectId(data["project_id"])
-            if isinstance(data.get("project_id"), str)
-            else data["project_id"]
+        scan = SbomScan.objects.create(
+            project_id=str(data["project_id"]),
+            scan_name=data.get("scan_name", ""),
+            triggered_by=str(data.get("triggered_by", "")),
+            status="queued",
+            created_at=datetime.now(timezone.utc),
+            deleted=False,
+            dependencies_scanned=0, vulnerabilities=0,
+            severity_counts={"critical": 0, "high": 0, "medium": 0, "low": 0, "negligible": 0},
+            ecosystems=[], sbom_format="syft-json", end_time=None,
         )
-
-        if "triggered_by" in data:
-            data["triggered_by"] = (
-                ObjectId(data["triggered_by"])
-                if isinstance(data["triggered_by"], str)
-                else data["triggered_by"]
-            )
-
-        data["created_at"] = datetime.now(timezone.utc)
-        data["status"] = "queued"
-        data["deleted"] = False
-
-        data["dependencies_scanned"] = 0
-        data["vulnerabilities"] = 0
-
-        data["severity_counts"] = {
-            "critical": 0,
-            "high": 0,
-            "medium": 0,
-            "low": 0,
-            "negligible": 0,
-        }
-
-        data["ecosystems"] = []
-        data["sbom_format"] = "syft-json"
-
-        data["end_time"] = None
-
-        result = cls.scans_collection.insert_one(data)
-
-        return cls.find_by_id(result.inserted_id)
+        return cls.find_by_id(scan.id)
 
     @classmethod
     def update_status(cls, scan_id: str, new_status: str):
-        cls.scans_collection.update_one(
-            {"_id": ObjectId(scan_id)},
-            {"$set": {"status": new_status}},
-        )
+        SbomScan.objects.filter(id=scan_id).update(status=new_status)
         return cls.find_by_id(scan_id)
 
     @classmethod
     def update_progress(cls, scan_id: str, **kwargs):
-
-        allowed = [
-            "dependencies_scanned",
-            "vulnerabilities",
-            "severity_counts",
-            "ecosystems",
-            "status",
-            "end_time",
-        ]
-
-        update_fields = {k: v for k, v in kwargs.items() if k in allowed}
-
-        if update_fields:
-            cls.scans_collection.update_one(
-                {"_id": ObjectId(scan_id)},
-                {"$set": update_fields},
-            )
-
+        allowed = ["dependencies_scanned", "vulnerabilities", "severity_counts",
+                   "ecosystems", "status", "end_time"]
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
+        if fields:
+            SbomScan.objects.filter(id=scan_id).update(**fields)
         return cls.find_by_id(scan_id)
 
     @classmethod
+    def update_scan_fields(cls, scan_id: str, fields: dict):
+        """Persist extra scan metadata (sbom_signing, sbom_artifact, license_policy)."""
+        allowed = ["sbom_signing", "sbom_artifact", "license_policy"]
+        data = {k: v for k, v in fields.items() if k in allowed}
+        if data:
+            SbomScan.objects.filter(id=scan_id).update(**data)
+
+    @classmethod
+    def insert_findings(cls, findings: list[dict]):
+        objs = []
+        for f in findings:
+            data = {k: f[k] for k in _FINDING_FIELDS if k in f}
+            data["scan_id"] = str(data.get("scan_id", ""))
+            data.setdefault("created_at", datetime.now(timezone.utc))
+            objs.append(SbomFinding(**data))
+        SbomFinding.objects.bulk_create(objs)
+
+    @classmethod
+    def insert_license_findings(cls, findings: list[dict]):
+        objs = []
+        for f in findings:
+            data = {k: f[k] for k in _LICENSE_FIELDS if k in f}
+            data["scan_id"] = str(data.get("scan_id", ""))
+            data.setdefault("created_at", datetime.now(timezone.utc))
+            objs.append(SbomLicenseFinding(**data))
+        SbomLicenseFinding.objects.bulk_create(objs)
+
+    @classmethod
     def find_by_id(cls, scan_id: str):
-        scan = cls.scans_collection.find_one({"_id": ObjectId(scan_id)})
-        return cls.serialize(scan)
+        return cls.serialize(SbomScan.objects.filter(id=scan_id).first())
 
     @classmethod
     def find_by_project(cls, project_id: str, page=1, limit=10):
-
         skip = (page - 1) * limit
-
-        cursor = (
-            cls.scans_collection
-            .find({"project_id": ObjectId(project_id)})
-            .skip(skip)
-            .limit(limit)
-        )
-
-        scans = [cls.serialize(doc) for doc in cursor]
-
-        total = cls.scans_collection.count_documents(
-            {"project_id": ObjectId(project_id)}
-        )
-
+        qs = SbomScan.objects.filter(project_id=project_id)
+        total = qs.count()
+        rows = list(qs[skip:skip + limit])
         return {
-            "scans": scans,
-            "pagination": {
-                "total": total,
-                "page": page,
-                "limit": limit,
-                "pages": (total + limit - 1) // limit,
-            },
+            "scans": [cls.serialize(s) for s in rows],
+            "pagination": {"total": total, "page": page, "limit": limit,
+                           "pages": (total + limit - 1) // limit if limit else 0},
         }
 
     @classmethod
     def delete_scan(cls, scan_id: str):
         try:
-            scan_result = cls.scans_collection.delete_one(
-                {"_id": ObjectId(scan_id)}
-            )
-
-            cls.findings_collection.delete_many(
-                {"scan_id": ObjectId(scan_id)}
-            )
-
-            return bool(scan_result.deleted_count)
-
+            deleted, _ = SbomScan.objects.filter(id=scan_id).delete()
+            SbomFinding.objects.filter(scan_id=scan_id).delete()
+            SbomLicenseFinding.objects.filter(scan_id=scan_id).delete()
+            return bool(deleted)
         except Exception:
             return False
-        
+
     @classmethod
     def find_sbom_findings_all(cls, scan_id: str):
-        cursor = cls.findings_collection.find({
-            "scan_id": ObjectId(scan_id)
-        })
-        return [cls.finding_serialize(doc) for doc in cursor]
-    
+        return [cls.finding_serialize(f) for f in SbomFinding.objects.filter(scan_id=scan_id)]
+
     @classmethod
     def find_by_sbom_scan(cls, scan_id: str, page=1, limit=10):
-        try:
-            skip = (page - 1) * limit
-            cursor = cls.findings_collection.find({
-                "scan_id": ObjectId(scan_id),
-            }).skip(skip).limit(limit)
-            findings = [cls.finding_serialize(doc) for doc in cursor]
+        skip = (page - 1) * limit
+        qs = SbomFinding.objects.filter(scan_id=scan_id)
+        total = qs.count()
+        rows = list(qs[skip:skip + limit])
+        return {
+            "findings": [cls.finding_serialize(f) for f in rows],
+            "pagination": {"total": total, "page": page, "limit": limit,
+                           "pages": (total + limit - 1) // limit if limit else 0},
+        }
 
-            total = cls.findings_collection.count_documents({"scan_id": ObjectId(scan_id)})
-            return {
-                "findings": findings,
-                "pagination": {
-                    "total": total,
-                    "page": page,
-                    "limit": limit,
-                    "pages": (total + limit - 1) // limit
-                }
-            }
-        except Exception as e:
-            return {
-                "error": "Internal Server Error"
-            }
-    
     @classmethod
     def find_license_findings_all(cls, scan_id: str):
-        cursor = cls.licenses_findings_collection.find({
-            "scan_id": ObjectId(scan_id)
-        })
-        return [cls.license_finding_serialize(doc) for doc in cursor]
-    
+        return [cls.license_finding_serialize(f)
+                for f in SbomLicenseFinding.objects.filter(scan_id=scan_id)]
+
     @classmethod
     def find_license_findings_by_scan(cls, scan_id: str, page=1, limit=10):
-        try:
-            skip = (page - 1) * limit
+        skip = (page - 1) * limit
+        qs = SbomLicenseFinding.objects.filter(scan_id=scan_id)
+        total = qs.count()
+        rows = list(qs[skip:skip + limit])
+        return {
+            "licenses": [cls.license_finding_serialize(f) for f in rows],
+            "pagination": {"total": total, "page": page, "limit": limit,
+                           "pages": (total + limit - 1) // limit if limit else 0},
+        }
 
-            cursor = cls.licenses_findings_collection.find({
-                "scan_id": ObjectId(scan_id),
-            }).skip(skip).limit(limit)
-
-            licenses = [cls.license_finding_serialize(doc) for doc in cursor]
-
-            total = cls.licenses_findings_collection.count_documents({
-                "scan_id": ObjectId(scan_id)
-            })
-
-            return {
-                "licenses": licenses,
-                "pagination": {
-                    "total": total,
-                    "page": page,
-                    "limit": limit,
-                    "pages": (total + limit - 1) // limit
-                }
-            }
-
-        except Exception:
-            return {
-                "error": "Internal Server Error"
-            }
-        
     @classmethod
     def find_license_by_risk(cls, scan_id: str, risk_level: str):
-        cursor = cls.licenses_findings_collection.find({
-            "scan_id": ObjectId(scan_id),
-            "license.risk_level": risk_level
-        })
-
-        return [cls.license_finding_serialize(doc) for doc in cursor]
+        rows = SbomLicenseFinding.objects.filter(scan_id=scan_id, license__risk_level=risk_level)
+        return [cls.license_finding_serialize(f) for f in rows]

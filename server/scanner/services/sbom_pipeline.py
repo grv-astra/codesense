@@ -3,7 +3,6 @@ import os
 import subprocess
 from collections import defaultdict
 from datetime import datetime, timezone
-from bson import ObjectId
 from pathlib import Path
 import shutil
 from local.api_app.models.sbom_models import SbomModel
@@ -232,7 +231,7 @@ def _parse_grype_results(grype_output: dict, scan_id: str):
         severity_counts[severity] += 1
 
         findings.append({
-            "scan_id": ObjectId(scan_id),
+            "scan_id": scan_id,
             "package_name": artifact.get("name"),
             "package_version": artifact.get("version"),
             "package_type": artifact.get("type"),
@@ -259,7 +258,7 @@ def _parse_grant_results(grant_output: dict, scan_id: str):
             risk_counts[risk_level] += 1
 
             findings.append({
-                "scan_id": ObjectId(scan_id),
+                "scan_id": scan_id,
                 "package_name": pkg.get("name"),
                 "package_version": pkg.get("version"),
                 "package_type": pkg.get("type"),
@@ -295,7 +294,7 @@ def _parse_grant_check_results(grant_output: dict, scan_id: str):
             # packages with NO licenses (your example shows this)
             if not licenses:
                 findings.append({
-                    "scan_id": ObjectId(scan_id),
+                    "scan_id": scan_id,
                     "package_name": pkg.get("name"),
                     "package_version": pkg.get("version"),
                     "package_type": pkg.get("type"),
@@ -325,7 +324,7 @@ def _parse_grant_check_results(grant_output: dict, scan_id: str):
                 risk_counts[risk_level] += 1
 
                 findings.append({
-                    "scan_id": ObjectId(scan_id),
+                    "scan_id": scan_id,
 
                     "package_name": pkg.get("name"),
                     "package_version": pkg.get("version"),
@@ -351,9 +350,6 @@ def _parse_grant_check_results(grant_output: dict, scan_id: str):
 # MAIN PIPELINE
 # -----------------------------
 def run_project_pipeline(project_path: str, scan_id: str, triggered_by=None):
-
-    vuln_db = SbomModel.findings_collection
-    license_db = SbomModel.licenses_findings_collection
 
     # --------------------------------------------------------
     # Output workspace
@@ -424,15 +420,7 @@ def run_project_pipeline(project_path: str, scan_id: str, triggered_by=None):
         raise Exception(f"SBOM signing/verification failed: {e}")
 
     # Persist signing metadata
-    SbomModel.scans_collection.update_one(
-        {"_id": ObjectId(scan_id)},
-        {
-            "$set": {
-                "sbom_signing": signing_status,
-                "sbom_artifact": str(sbom_path),
-            }
-        }
-    )
+    SbomModel.update_scan_fields(scan_id, {"sbom_signing": signing_status, "sbom_artifact": str(sbom_path)})
 
     # --------------------------------------------------------
     # STEP 4 — Grype vulnerability scan
@@ -449,7 +437,7 @@ def run_project_pipeline(project_path: str, scan_id: str, triggered_by=None):
         )
 
         if findings:
-            vuln_db.insert_many(findings)
+            SbomModel.insert_findings(findings)
 
     except Exception as e:
         severity_counts = defaultdict(int)
@@ -478,16 +466,9 @@ def run_project_pipeline(project_path: str, scan_id: str, triggered_by=None):
             )
 
         if license_findings:
-            license_db.insert_many(license_findings)
+            SbomModel.insert_license_findings(license_findings)
 
-        SbomModel.scans_collection.update_one(
-            {"_id": ObjectId(scan_id)},
-            {
-                "$set": {
-                    "license_policy": grant_output.get("run", {}).get("policy", {}),
-                }
-            }
-        )
+        SbomModel.update_scan_fields(scan_id, {"license_policy": grant_output.get("run", {}).get("policy", {})})
 
     except Exception as e:
         risk_counts = defaultdict(int)
@@ -539,9 +520,6 @@ def run_project_pipeline(project_path: str, scan_id: str, triggered_by=None):
 # SBOM UPLOAD PIPELINE
 # -----------------------------
 def run_sbom_pipeline(sbom_path: str, scan_id: str, triggered_by=None):
-
-    vuln_db = SbomModel.findings_collection
-    license_db = SbomModel.licenses_findings_collection
 
     output_dir = Path("output") / str(scan_id)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -601,14 +579,7 @@ def run_sbom_pipeline(sbom_path: str, scan_id: str, triggered_by=None):
         raise Exception(f"SBOM signing/verification failed: {e}")
 
     # Persist signing metadata early
-    SbomModel.scans_collection.update_one(
-        {"_id": ObjectId(scan_id)},
-        {
-            "$set": {
-                "sbom_signing": signing_status,
-            }
-        }
-    )
+    SbomModel.update_scan_fields(scan_id, {"sbom_signing": signing_status})
 
     # --------------------------------------------------------
     # GRYPE
@@ -621,7 +592,7 @@ def run_sbom_pipeline(sbom_path: str, scan_id: str, triggered_by=None):
         findings, severity_counts = _parse_grype_results(grype_output, scan_id)
 
         if findings:
-            vuln_db.insert_many(findings)
+            SbomModel.insert_findings(findings)
 
     except Exception as e:
         severity_counts = defaultdict(int)
@@ -649,16 +620,9 @@ def run_sbom_pipeline(sbom_path: str, scan_id: str, triggered_by=None):
             )
 
         if license_findings:
-            license_db.insert_many(license_findings)
+            SbomModel.insert_license_findings(license_findings)
 
-        SbomModel.scans_collection.update_one(
-            {"_id": ObjectId(scan_id)},
-            {
-                "$set": {
-                    "license_policy": grant_output.get("run", {}).get("policy", {}),
-                }
-            }
-        )
+        SbomModel.update_scan_fields(scan_id, {"license_policy": grant_output.get("run", {}).get("policy", {})})
 
     except Exception as e:
         risk_counts = defaultdict(int)
