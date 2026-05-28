@@ -1,9 +1,10 @@
 import { Button } from '@/components/atomic/button';
 import { Input } from '@/components/atomic/input';
 import { useAuth } from '@/hooks/use-auth';
+import { useSetupStatus } from '@/hooks/use-setup';
 import { authService } from '@/lib/auth';
 import { useForm } from '@tanstack/react-form';
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { AxiosError } from 'axios';
 import { Eye, EyeOff, Lock, Mail, User } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -21,6 +22,15 @@ export const Route = createFileRoute('/_auth/login')({
 function RouteComponent() {
   const [showPassword, setShowPassword] = useState(false);
   const { login, isLoginLoading, loginError } = useAuth()
+  const navigate = useNavigate();
+  const { data: setupStatus } = useSetupStatus();
+
+  // First-run: if no admin exists yet, send the user to the setup wizard.
+  useEffect(() => {
+    if (setupStatus?.setup_needed) {
+      navigate({ to: '/setup' });
+    }
+  }, [setupStatus, navigate]);
 
   const form = useForm({
     defaultValues: {

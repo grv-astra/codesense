@@ -1,5 +1,6 @@
 import Header from '@/components/molecule/header'
 import Sidebar from '@/components/molecule/sidebar'
+import LicenseBanner from '@/components/molecule/license-banner'
 import { createFileRoute, Outlet } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_authenticated')({
@@ -24,7 +25,8 @@ function RouteComponent() {
         
         {/* Scrollable content area */}
         <div className='flex-1 p-4 mt-16 overflow-y-auto'> {/* Adjust mt-16 based on your header height */}
-          <Outlet /> 
+          <LicenseBanner />
+          <Outlet />
         </div>
       </div>
     </div>

@@ -1,8 +1,12 @@
 import axios, { type AxiosInstance, type AxiosResponse, AxiosError } from 'axios';
 
-const ip = window.location.hostname;
-const port = 8585; // adjust if needed
-export const BACKEND_URL = `http://${ip}:${port}`;
+// Fixed loopback backend. Works both in the dev browser and inside the Tauri
+// webview, whose origin is tauri://localhost — so window.location.hostname
+// (the old value) resolved to "tauri.localhost" and broke every request.
+// Overridable at build/runtime via VITE_BACKEND_URL.
+const port = 8585;
+export const BACKEND_URL =
+  (import.meta.env.VITE_BACKEND_URL as string | undefined) ?? `http://127.0.0.1:${port}`;
 
 // Base API Client with common functionality
 export class BaseApiClient {
