@@ -10,6 +10,11 @@ _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 _ALLOW_PREFIXES = ("/api/auth/login", "/api/auth/setup", "/api/license", "/admin")
 
 
+def _is_exempt(path: str) -> bool:
+    # Segment-aware match so "/api/license" does not also exempt "/api/license-evil".
+    return any(path == p or path.startswith(p + "/") for p in _ALLOW_PREFIXES)
+
+
 class ReadOnlyGraceMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
@@ -19,7 +24,7 @@ class ReadOnlyGraceMiddleware:
         if (
             request.method not in _SAFE_METHODS
             and path.startswith("/api/")
-            and not any(path.startswith(p) for p in _ALLOW_PREFIXES)
+            and not _is_exempt(path)
         ):
             state = get_state()["state"]
             if state in (EXPIRED, TAMPERED):

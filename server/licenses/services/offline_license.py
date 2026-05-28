@@ -38,12 +38,13 @@ _REG_VALUE = "license"
 
 
 def _secret() -> bytes:
-    value = (
-        os.getenv("LICENSE_SECRET")
-        or getattr(settings, "LICENSE_SECRET", None)
-        or "codesense-offline-license-v1-REPLACE-AT-BUILD"
-    )
-    return value.encode("utf-8")
+    explicit = os.getenv("LICENSE_SECRET") or getattr(settings, "LICENSE_SECRET", None)
+    if explicit:
+        return explicit.encode("utf-8")
+    # No explicit secret: derive a per-install key from this install's SECRET_KEY
+    # (unique + persisted on first run) rather than a constant shared by every build.
+    base = getattr(settings, "SECRET_KEY", "") or ""
+    return hashlib.sha256(("codesense-offline-license-v1:" + base).encode("utf-8")).digest()
 
 
 def _duration() -> timedelta:

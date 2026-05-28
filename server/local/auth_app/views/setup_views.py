@@ -1,4 +1,5 @@
 from rest_framework import status
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -21,5 +22,11 @@ class SetupCreateAdminView(APIView):
         if not email or not password or not name:
             return Response({"detail": "email, password, and name are required."},
                             status=status.HTTP_400_BAD_REQUEST)
-        admin = create_initial_admin(email, password, name, company)
+        try:
+            admin = create_initial_admin(email, password, name, company)
+        except ValidationError as exc:
+            detail = exc.detail[0] if isinstance(exc.detail, (list, tuple)) else exc.detail
+            return Response({"detail": str(detail)}, status=status.HTTP_400_BAD_REQUEST)
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         return Response({"user": admin}, status=status.HTTP_201_CREATED)
