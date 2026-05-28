@@ -122,21 +122,29 @@ Ok "astra-Q4_K_M.gguf staged"
 # 4. SBOM tools (Syft / Grype / Grant / Cosign)
 # --------------------------------------------------------------------------- #
 if (-not $SkipTools) {
-  Info "Downloading SBOM tools (windows_amd64)"
+  Info "Downloading SBOM tools (latest windows_amd64 releases)"
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
   $tmp = Join-Path $env:TEMP ("cs-tools-" + [guid]::NewGuid())
   Ensure-Dir $tmp
-  function Get-Anchore($tool, $ver) {
-    $url = "https://github.com/anchore/$tool/releases/download/v$ver/${tool}_${ver}_windows_amd64.zip"
-    $zip = Join-Path $tmp "$tool.zip"
-    Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
-    Expand-Archive -Path $zip -DestinationPath (Join-Path $tmp $tool) -Force
-    Copy-Item (Join-Path $tmp "$tool\$tool.exe") (Join-Path $ResTools "$tool.exe") -Force
+
+  function Get-GhAsset($repo, $pattern, $outFile) {
+    # Resolve the latest release and download the asset whose name matches $pattern.
+    $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" `
+                             -Headers @{ "User-Agent" = "codesense-build" } -UseBasicParsing
+    $asset = $rel.assets | Where-Object { $_.name -match $pattern } | Select-Object -First 1
+    if (-not $asset) { Die "No asset matching '$pattern' in latest $repo release ($($rel.tag_name))." }
+    Ok "$repo $($rel.tag_name) -> $($asset.name)"
+    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $outFile -UseBasicParsing
   }
-  Get-Anchore "syft"  $SyftVersion
-  Get-Anchore "grype" $GrypeVersion
-  Get-Anchore "grant" $GrantVersion
-  $cosignUrl = "https://github.com/sigstore/cosign/releases/download/v$CosignVersion/cosign-windows-amd64.exe"
-  Invoke-WebRequest -Uri $cosignUrl -OutFile (Join-Path $ResTools "cosign.exe") -UseBasicParsing
+
+  foreach ($tool in @("syft", "grype", "grant")) {
+    $zip = Join-Path $tmp "$tool.zip"
+    Get-GhAsset "anchore/$tool" "_windows_amd64\.zip$" $zip
+    Expand-Archive -Path $zip -DestinationPath (Join-Path $tmp $tool) -Force
+    Copy-Item (Join-Path (Join-Path $tmp $tool) "$tool.exe") (Join-Path $ResTools "$tool.exe") -Force
+  }
+  Get-GhAsset "sigstore/cosign" "cosign-windows-amd64\.exe$" (Join-Path $ResTools "cosign.exe")
+
   Remove-Item $tmp -Recurse -Force
   Ok "syft/grype/grant/cosign staged in resources\tools"
 } else { Info "Skipping SBOM tool download (-SkipTools)" }
@@ -166,11 +174,19 @@ if ($WebView2 -and (Test-Path $WebView2)) {
   Write-Warning "No -WebView2 provided. For a guaranteed-offline installer, stage a fixed-version runtime into src-tauri\webview2\ (see src-tauri\README.md)."
 }
 
+if (-not $IconLogo) {
+  foreach ($cand in @("client\public\CSlogo.png", "client\public\logoCS.png")) {
+    $p = Join-Path $RepoRoot $cand
+    if (Test-Path $p) { $IconLogo = $p; break }
+  }
+}
 if ($IconLogo -and (Test-Path $IconLogo)) {
   Info "Generating app icons from $IconLogo"
   Push-Location $Client
   try { npx --yes @tauri-apps/cli icon $IconLogo } finally { Pop-Location }
   Ok "Icons generated into src-tauri\icons"
+} else {
+  Write-Warning "No icon source found; the Tauri build needs src-tauri\icons. Pass -IconLogo <square PNG>."
 }
 
 # --------------------------------------------------------------------------- #
