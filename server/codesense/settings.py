@@ -43,7 +43,6 @@ INSTALLED_APPS = [
     'local.auth_app',
     'local.api_app',
     'scanner',
-    'common.db',
     'corsheaders',
     'licenses'
 ]
@@ -82,11 +81,16 @@ WSGI_APPLICATION = 'codesense.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-DATABASES = {
-}
+# Per-user writable data directory (overridable by the desktop launcher).
+DATA_DIR = Path(os.getenv("CODESENSE_DATA_DIR", BASE_DIR / "data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-MONGO_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
-MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "code_sense")
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": str(DATA_DIR / "app.sqlite3"),
+    }
+}
 
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True

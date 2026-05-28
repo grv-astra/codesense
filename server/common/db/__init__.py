@@ -1,29 +1,19 @@
 # common/db/__init__.py
+# DEPRECATED during the SQLite migration. Kept only so legacy imports resolve
+# until every model is ported. Removed in a later cleanup.
 
-from pymongo import MongoClient, errors
-from django.conf import settings
-import logging
+class _LazyCollection:
+    def __getitem__(self, name):
+        return self
 
-logger = logging.getLogger(__name__)
+    def __getattr__(self, name):
+        raise RuntimeError(
+            "MongoDBClient is deprecated; this module has been migrated to "
+            "SQLite (Django ORM). Use the repository classes instead."
+        )
+
 
 class MongoDBClient:
-    _instance = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            try:
-                mongo_uri = getattr(settings, "MONGO_URI", "mongodb://localhost:27017")
-                client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
-                client.admin.command("ping")
-                cls._instance = client
-                logger.info("MongoDB connection established.")
-            except errors.ServerSelectionTimeoutError as e:
-                logger.error(f"MongoDB connection failed: {e}")
-                raise ConnectionError("Could not connect to MongoDB server.")
-        return cls._instance
-
     @classmethod
     def get_database(cls, db_name=None):
-        client = cls()
-        db_name = db_name or getattr(settings, "MONGO_DB_NAME", "test")
-        return client[db_name]
+        return _LazyCollection()
