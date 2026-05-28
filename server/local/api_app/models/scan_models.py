@@ -1,117 +1,82 @@
-# scanner/models/scan_model.py
-
-from bson import ObjectId
 from datetime import datetime, timezone
-from common.db import MongoDBClient
+from local.api_app.models.orm import Scan, Finding
+
+
+def _iso(dt):
+    return dt.isoformat() if dt else None
+
 
 class ScanModel:
-    scans_collection = MongoDBClient.get_database()["scans"]
-    findings_collection = MongoDBClient.get_database()["findings"]
-
     @staticmethod
     def serialize(scan):
-        if not scan:
+        if scan is None:
             return None
         return {
-            "id": str(scan["_id"]),
-            "project_id": str(scan["project_id"]),
-            "scan_name": scan.get("scan_name", ""),
-            "status": scan.get("status", "queued"),
-            "source": scan.get("source", "zip"),
-            "created_at": scan["created_at"].isoformat() if scan.get("created_at") else None,
-            "triggered_by": str(scan.get("triggered_by", "")),
-            "total_files": scan.get("total_files", 0),
-            "files_scanned": scan.get("files_scanned", 0),
-            "findings": scan.get("findings", 0),
-            "error": scan.get("error", ""),
-            "end_time": scan["end_time"].isoformat() if scan.get("end_time") else None,
-            "metrics": scan.get("metrics", {
-                "total_functions": 0,
-                "total_loc": 0,
-                "languages": []
-            })
+            "id": str(scan.id),
+            "project_id": str(scan.project_id),
+            "scan_name": scan.scan_name or "",
+            "status": scan.status or "queued",
+            "source": scan.source or "zip",
+            "created_at": _iso(scan.created_at),
+            "triggered_by": str(scan.triggered_by or ""),
+            "total_files": scan.total_files,
+            "files_scanned": scan.files_scanned,
+            "findings": scan.findings,
+            "error": scan.error or "",
+            "end_time": _iso(scan.end_time),
+            "metrics": scan.metrics or {"total_functions": 0, "total_loc": 0, "languages": []},
         }
 
     @classmethod
     def create(cls, data: dict):
-        """
-        Create a new scan document.
-        Expects: project_id, scan_name, triggered_by (optional)
-        """
-        data["project_id"] = ObjectId(data["project_id"]) if isinstance(data.get("project_id"), str) else data["project_id"]
-        if "triggered_by" in data:
-            data["triggered_by"] = ObjectId(data["triggered_by"]) if isinstance(data["triggered_by"], str) else data["triggered_by"]
-        data["created_at"] = datetime.now(timezone.utc)
-        data["status"] = "queued"
-        data["deleted"] = False
-        data["source"] = data.get("source", "zip")
-        data["total_files"] = 0
-        data["files_scanned"] = 0
-        data["findings"] = 0
-        data["end_time"] = None
-
-        result = cls.scans_collection.insert_one(data)
-        return cls.find_by_id(result.inserted_id)
+        scan = Scan.objects.create(
+            project_id=str(data["project_id"]),
+            scan_name=data.get("scan_name", ""),
+            triggered_by=str(data.get("triggered_by", "")),
+            source=data.get("source", "zip"),
+            status="queued",
+            created_at=datetime.now(timezone.utc),
+            deleted=False,
+            total_files=0, files_scanned=0, findings=0, end_time=None,
+        )
+        return cls.find_by_id(scan.id)
 
     @classmethod
     def update_status(cls, scan_id: str, new_status: str):
-        """
-        Update scan status to one of: queued, in_progress, completed, failed
-        """
-        cls.scans_collection.update_one(
-            {"_id": ObjectId(scan_id)},
-            {"$set": {"status": new_status}}
-        )
+        Scan.objects.filter(id=scan_id).update(status=new_status)
         return cls.find_by_id(scan_id)
 
     @classmethod
     def update_progress(cls, scan_id: str, **kwargs):
-        """
-        Update any subset of: total_files, files_scanned, findings, end_time, status
-        Example: update_progress(scan_id, files_scanned=3, findings=7)
-        """
-        update_fields = {}
-        for key in ["total_files", "files_scanned", "findings", "end_time", "status"]:
-            if key in kwargs:
-                update_fields[key] = kwargs[key]
-
-        if update_fields:
-            cls.scans_collection.update_one(
-                {"_id": ObjectId(scan_id)},
-                {"$set": update_fields}
-            )
-
+        allowed = ["total_files", "files_scanned", "findings", "end_time", "status"]
+        fields = {k: kwargs[k] for k in allowed if k in kwargs}
+        if fields:
+            Scan.objects.filter(id=scan_id).update(**fields)
         return cls.find_by_id(scan_id)
 
     @classmethod
     def find_by_id(cls, scan_id: str):
-        scan = cls.scans_collection.find_one({"_id": ObjectId(scan_id)})
-        return cls.serialize(scan)
+        return cls.serialize(Scan.objects.filter(id=scan_id).first())
 
     @classmethod
     def find_by_project(cls, project_id: str, page=1, limit=10):
         skip = (page - 1) * limit
-        cursor = cls.scans_collection.find({"project_id": ObjectId(project_id)}).skip(skip).limit(limit)
-        scans =  [cls.serialize(doc) for doc in cursor]
-
-        total = cls.scans_collection.count_documents({"project_id": ObjectId(project_id)})
+        qs = Scan.objects.filter(project_id=project_id)
+        total = qs.count()
+        rows = list(qs.order_by("created_at")[skip:skip + limit])
         return {
-            "scans": scans,
+            "scans": [cls.serialize(s) for s in rows],
             "pagination": {
-                "total": total,
-                "page": page,
-                "limit": limit,
-                "pages": (total + limit - 1) // limit
-            }
+                "total": total, "page": page, "limit": limit,
+                "pages": (total + limit - 1) // limit if limit else 0,
+            },
         }
 
     @classmethod
     def delete_scan(cls, scan_id: str):
         try:
-            scan_result = cls.scans_collection.delete_one({"_id": ObjectId(scan_id)})
-            cls.findings_collection.delete_many({"scan_id": ObjectId(scan_id)})
-            return bool(scan_result.deleted_count)
-        except:
+            deleted, _ = Scan.objects.filter(id=scan_id).delete()
+            Finding.objects.filter(scan_id=scan_id).delete()
+            return bool(deleted)
+        except Exception:
             return False
-        
-        
