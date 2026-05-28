@@ -412,7 +412,7 @@ def run_project_pipeline(project_path: str, scan_id: str, triggered_by=None):
             "sbom_signed": True,
             "verified": True,
             "bundle_file": str(bundle_path),
-            "verified_at": datetime.now(timezone.utc),
+            "verified_at": datetime.now(timezone.utc).isoformat(),
             "signature_algorithm": "cosign",
         }
 
@@ -571,7 +571,7 @@ def run_sbom_pipeline(sbom_path: str, scan_id: str, triggered_by=None):
             "sbom_signed": True,
             "verified": True,
             "bundle_file": str(bundle_path),
-            "verified_at": datetime.now(timezone.utc),
+            "verified_at": datetime.now(timezone.utc).isoformat(),
             "signature_algorithm": "cosign",
         }
 

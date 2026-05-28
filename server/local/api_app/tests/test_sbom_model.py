@@ -1,5 +1,8 @@
+from datetime import datetime, timezone
+
 from django.test import TestCase
 from local.api_app.models.sbom_models import SbomModel
+from local.api_app.models.orm import SbomScan
 
 
 class SbomModelTests(TestCase):
@@ -48,3 +51,24 @@ class SbomModelTests(TestCase):
         SbomModel.insert_findings([{"scan_id": s["id"], "package_name": "a"}])
         self.assertTrue(SbomModel.delete_scan(s["id"]))
         self.assertEqual(SbomModel.find_sbom_findings_all(s["id"]), [])
+
+    def test_sbom_signing_payload_is_json_serializable(self):
+        # Regression: sbom_signing is a JSONField (default encoder). `verified_at`
+        # must be an ISO string, not a raw datetime, or json.dumps raises TypeError
+        # and the SBOM scan crashes after signing.
+        s = SbomModel.create({"project_id": "p", "scan_name": "SB"})
+        signing = {
+            "sbom_signed": True,
+            "verified": True,
+            "bundle_file": "/tmp/sbom.bundle.json",
+            "verified_at": datetime.now(timezone.utc).isoformat(),
+            "signature_algorithm": "cosign",
+        }
+        SbomModel.update_scan_fields(s["id"], {"sbom_signing": signing})
+        stored = SbomScan.objects.get(id=s["id"]).sbom_signing
+        self.assertEqual(stored, signing)
+        # A raw datetime is not JSON-serializable — guard against reintroduction.
+        with self.assertRaises(TypeError):
+            SbomModel.update_scan_fields(
+                s["id"], {"sbom_signing": {"verified_at": datetime.now(timezone.utc)}}
+            )
