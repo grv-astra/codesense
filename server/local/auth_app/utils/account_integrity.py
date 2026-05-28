@@ -88,8 +88,7 @@ def unregister_user(user):
 
 def sync_protected_accounts(created_by="provisioning"):
     registry = {}
-    cursor = UserModel.collection.find({"role": {"$in": list(PROTECTED_ROLES)}, "deleted": False})
-    for user in cursor:
+    for user in UserModel.find_protected(list(PROTECTED_ROLES)):
         snapshot = _user_snapshot(user, created_by=created_by)
         registry[snapshot["email"]] = snapshot
     _save_registry(registry)
