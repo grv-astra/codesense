@@ -3,8 +3,8 @@
 **Prepared for:** Bank Information Security / Vendor Risk / Endpoint Engineering
 **Product:** Code Sense — offline AI code-review & SBOM/SCA scanner (desktop)
 **Deployment model:** Single self-contained Windows desktop application, fully offline
-**Document version:** 1.4 · **Date:** 2026-05-28 · **Classification:** Confidential
-**Revision:** v1.4 — issued for bank security / vendor-risk review.
+**Document version:** 1.5 · **Date:** 2026-05-28 · **Classification:** Confidential
+**Revision:** v1.5 — added architecture, data-flow, and network/trust-boundary diagrams (§3).
 
 > Items marked **[VERIFY]** require confirmation by the vendor before sign-off (e.g.,
 > model licensing, code-signing certificate, final build artifact hashes). They are
@@ -46,17 +46,77 @@ fixed **90-day** term from first launch, after which it enters a read-only state
 
 ## 3. Deployment architecture & data flow
 
+### 3.1 Architecture (component / deployment)
+
 ```
-┌──────────────── Code Sense.exe (Tauri desktop shell) ─ user session ─────────────┐
-│  WebView2 window (local UI)  ──HTTP(127.0.0.1:8585)──▶  Django backend (waitress) │
-│                                                          │                         │
-│                                                          ├─ SQLite  (%LOCALAPPDATA%)│
-│                                                          ├─ llama-server 127.0.0.1 │
-│                                                          │     (AI code review)     │
-│                                                          └─ Syft / Grype / Cosign   │
-│                                                                (SCA / SBOM / sign)  │
-└───────────────────────────────────────────────────────────────────────────────────┘
-        NO inbound ports exposed · NO outbound connections · loopback only
++----------------- User laptop  (loopback only, no network egress) -----------------+
+|                                                                                   |
+|   +---------- Code Sense  (Tauri shell, Rust) ----------+                          |
+|   |  tray: Open / Pause AI / Quit                       |                          |
+|   |  WebView2 window  ->  React + Vite UI               |                          |
+|   +---------------------------+-------------------------+                          |
+|        | shell spawns &        |  HTTP  http://127.0.0.1:8585                       |
+|        | supervises sidecars   v                                                   |
+|   +------------------ Django backend (waitress) ------------------+                |
+|   |  REST API | JWT auth | RBAC | read-only license middleware    |                |
+|   |    |                                                          |                |
+|   |    +- HTTP /v1/chat -> llama-server (llama.cpp + astra.gguf, CPU)              |
+|   |    +- subprocess ----> Syft / Grype / Grant / Cosign  (resources\tools)        |
+|   |    +- reads --------->  Grype CVE DB snapshot (frozen, resources\grype-db)     |
+|   |    +- read/write --->  SQLite + license stamp + cosign keys (%LOCALAPPDATA%)   |
+|   +---------------------------------------------------------------+                |
+|                                                                                   |
+|   X no inbound ports beyond loopback   X no outbound traffic   X no telemetry      |
++-----------------------------------------------------------------------------------+
+```
+
+### 3.2 Data flow (all local)
+
+```
+ Operator
+    |  creds / source code / SBOM
+    v
+ [WebView2 UI] --HTTP loopback (Bearer JWT)--> [Django backend @127.0.0.1:8585]
+                                                   |
+        +------------------+--------------------+--------------------+
+        v                  v                    v                    v
+  [JWT auth + RBAC]  [License middleware]  [Scan orchestrator]   [Dashboard]
+        | create admin   ^ (read-only grace)    |                    |
+        v                | active/expired/        +-- code --> [SAST: AST + chunks]
+   (SQLite users)        |  tampered                              |  POST /v1/chat
+                         v                                        v
+                   [License stamp]                        [llama-server (GGUF)]
+                    file + reg/plist                              |  findings
+                                                                  v
+ [Scan orchestrator] -- dir / SBOM --> [SCA: Syft -> Grype + Grant] -> (SQLite findings)
+                                            |  query CVEs
+                                            v
+                                    [Grype DB snapshot (frozen)]
+
+ Finding / dashboard views ----read----> (SQLite)
+ ===>  No data ever leaves the laptop (no cloud, no telemetry, no license server)  <===
+```
+
+### 3.3 Network / trust boundary
+
+```
+                         (no inbound)          (no outbound)
+                              X                     X
+  +=====================  TRUST BOUNDARY: the bank laptop  =====================+
+  ||                                                                           ||
+  ||  Operator (OS user) --keyboard / user-selected files-->  Code Sense       ||
+  ||                                                                           ||
+  ||  Loopback 127.0.0.1 (never bound to a routable interface):                ||
+  ||     WebView2 UI <---> Django :8585 <---> llama-server :<port>             ||
+  ||                                                                           ||
+  ||  Local disk (relies on endpoint full-disk encryption / BitLocker):        ||
+  ||     SQLite | license stamp | cosign keys | frozen Grype DB | tools+model  ||
+  ||                                                                           ||
+  +=============================================================================+
+        ^
+        |  BUILD-TIME ONLY, on the VENDOR build host (NOT the bank laptop):
+        |  fetch Syft/Grype/Grant/Cosign + Grype DB + model  ->  bake into the
+        |  signed installer  ->  transfer offline to the laptop
 ```
 
 **Data flow (all local):**

@@ -192,6 +192,55 @@ sequenceDiagram
 
 ---
 
+## 4. Network / trust boundary (for security review)
+
+```mermaid
+flowchart TB
+  op(["Operator (OS user)"])
+  files[/"Local code &amp; SBOM files (user-selected)"/]
+  vendor["VENDOR build host (build-time only):<br/>fetches tools, Grype DB, model"]
+
+  subgraph BOUND["TRUST BOUNDARY = the bank laptop (no inbound, no outbound)"]
+    subgraph LB["Loopback 127.0.0.1 only"]
+      ui2["WebView2 UI"] <--> be2["Django :8585"] <--> ll2["llama-server :port"]
+    end
+    disk[("Local disk (endpoint FDE):<br/>SQLite, license stamp, cosign keys,<br/>frozen Grype DB, tools, model")]
+    be2 <--> disk
+  end
+
+  op -->|"keyboard / files"| ui2
+  files -->|"read on demand"| be2
+  vendor -. "signed installer (offline transfer)" .-> BOUND
+```
+
+### ASCII fallback
+
+```
+                         (no inbound)          (no outbound)
+                              X                     X
+  +=====================  TRUST BOUNDARY: the bank laptop  =====================+
+  ||                                                                           ||
+  ||  Operator (OS user) --keyboard / user-selected files-->  Code Sense       ||
+  ||                                                                           ||
+  ||  Loopback 127.0.0.1 (never bound to a routable interface):                ||
+  ||     WebView2 UI <---> Django :8585 <---> llama-server :<port>             ||
+  ||                                                                           ||
+  ||  Local disk (relies on endpoint full-disk encryption / BitLocker):        ||
+  ||     SQLite | license stamp | cosign keys | frozen Grype DB | tools+model  ||
+  ||                                                                           ||
+  +=============================================================================+
+        ^
+        |  BUILD-TIME ONLY, on the VENDOR build host (NOT the bank laptop):
+        |  fetch Syft/Grype/Grant/Cosign + Grype DB + model  ->  bake into the
+        |  signed installer  ->  transfer offline to the laptop
+```
+
+**What crosses the boundary:** nothing over the network. The only inputs are the operator
+at the keyboard and local files they explicitly select; the only "import" is the signed
+installer, transferred offline. No runtime process opens a non-loopback socket.
+
+---
+
 ## Notes
 - **Ports:** backend `127.0.0.1:8585`; `llama-server` on a private loopback port. No other listeners.
 - **OS specifics:** Windows uses WebView2 + a registry second store for the license; macOS uses WKWebView + a `~/Library/Preferences` plist second store. Logic is otherwise identical.
