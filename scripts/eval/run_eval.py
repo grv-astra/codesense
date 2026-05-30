@@ -21,7 +21,7 @@ sys.path.insert(0, str(HERE.parent))  # make `eval` importable
 
 from eval.datasets.curated import load_curated                  # noqa: E402
 from eval.datasets.owasp_benchmark import parse_expectedresults  # noqa: E402
-from eval.metrics import compute, meets_thresholds              # noqa: E402
+from eval.metrics import Counts, compute, meets_thresholds      # noqa: E402
 from eval import runner, report                                  # noqa: E402
 
 EMPTY = {"precision": 0, "recall": 0, "f1": 0, "fp_rate": 0, "tp": 0, "fp": 0, "fn": 0, "tn": 0}
@@ -41,7 +41,6 @@ def main():
     ap = argparse.ArgumentParser(description="LSAST eval harness")
     ap.add_argument("--dataset", choices=["curated", "owasp", "all"], default="curated")
     ap.add_argument("--tier", choices=["detector", "verifier", "all"], default="detector")
-    ap.add_argument("--sample-size", type=int, default=200)
     ap.add_argument("--gate", action="store_true", help="exit 1 if thresholds not met")
     args = ap.parse_args()
 
@@ -56,8 +55,15 @@ def main():
             print("WARNING: OWASP_CSV/OWASP_SRC unset — skipping OWASP dataset.")
 
     scan_fn, lang_fn = _scanner()
-    det = compute(runner.run_detector_tier(cases, scan_fn=scan_fn))
-    by_lang = runner.run_detector_tier_by_language(cases, scan_fn=scan_fn, lang_fn=lang_fn)
+    by_lang = runner.run_detector_tier_by_language(
+        cases, scan_fn=scan_fn, lang_fn=lambda p: lang_fn(str(p)))
+    overall = Counts()
+    for c in by_lang.values():
+        overall.tp += c.tp
+        overall.fp += c.fp
+        overall.fn += c.fn
+        overall.tn += c.tn
+    det = compute(overall)
     per_language = {lang: compute(c) for lang, c in by_lang.items()}
 
     if args.tier in ("verifier", "all"):
@@ -67,7 +73,8 @@ def main():
     passed, failures = meets_thresholds(det)
     md = report.render_markdown(
         title=f"baseline {args.dataset}/{args.tier}",
-        detector=det, verifier=dict(EMPTY), per_language=per_language,
+        detector=det, verifier=dict(EMPTY),  # zeros: verifier tier is a manual sampled pass (see README)
+        per_language=per_language,
         passed=passed, failures=failures,
     )
     out = HERE / "results"
