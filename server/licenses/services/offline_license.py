@@ -11,9 +11,9 @@ NOT a determined reverse-engineer:
     and verifies its own stamp, so asymmetric keys add no value here. For a
     vendor-issued license file you would switch to Ed25519 with the public key
     embedded.)
-  * The stamp is written to TWO places — a file in DATA_DIR and (on Windows) a
-    registry key — and we take the EARLIEST valid ``first_seen``, so deleting one
-    copy doesn't reset the clock.
+  * The stamp is written to TWO places — a file in DATA_DIR and a second OS store
+    (Windows registry / macOS plist outside DATA_DIR) — and we take the EARLIEST
+    valid ``first_seen``, so deleting one copy doesn't reset the clock.
   * A monotonic ``last_seen`` high-water-mark detects system-clock rollback.
 
 In production the embedded secret should be injected/obfuscated at build time.
@@ -22,6 +22,8 @@ import hashlib
 import hmac
 import json
 import os
+import plistlib
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -87,7 +89,7 @@ def _is_valid(rec) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# Storage backends — file (cross-platform) + registry (Windows only)
+# Storage backends — file (cross-platform) + registry (Windows) + plist (macOS)
 # --------------------------------------------------------------------------- #
 def _file_path() -> Path:
     return Path(getattr(settings, "DATA_DIR")) / "license.json"
@@ -134,9 +136,44 @@ def _registry_write(rec: dict):
         pass
 
 
+def _plist_path() -> Path:
+    """Second store on macOS — a plist OUTSIDE DATA_DIR (the registry analogue)."""
+    override = getattr(settings, "LICENSE_PLIST_PATH", None)
+    if override:
+        return Path(override)
+    return Path.home() / "Library" / "Preferences" / "com.codesense.desktop.license.plist"
+
+
+def _plist_read():
+    # Read directly via plistlib (not `defaults`) so cfprefsd never caches/clobbers it.
+    if sys.platform != "darwin":
+        return None
+    p = _plist_path()
+    if not p.exists():
+        return None
+    try:
+        with p.open("rb") as fh:
+            return plistlib.load(fh)
+    except Exception:
+        return {"__corrupt__": True}
+
+
+def _plist_write(rec: dict):
+    if sys.platform != "darwin":
+        return
+    try:
+        p = _plist_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("wb") as fh:
+            plistlib.dump(rec, fh)
+    except Exception:
+        pass
+
+
 def _write_all(rec: dict):
     _file_write(rec)
     _registry_write(rec)
+    _plist_write(rec)
 
 
 # --------------------------------------------------------------------------- #
@@ -156,7 +193,7 @@ def get_state() -> dict:
 
     Returns {state, first_seen, expires_at, days_remaining}.
     """
-    sources = [r for r in (_file_read(), _registry_read()) if r is not None]
+    sources = [r for r in (_file_read(), _registry_read(), _plist_read()) if r is not None]
 
     if not sources:
         now = _now()

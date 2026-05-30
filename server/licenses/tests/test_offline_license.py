@@ -1,7 +1,10 @@
 import json
+import plistlib
+import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import skipUnless
 
 from django.test import SimpleTestCase, override_settings
 
@@ -15,7 +18,14 @@ def _ago(days):
 class OfflineLicenseTests(SimpleTestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
-        self._ov = override_settings(DATA_DIR=self.dir, LICENSE_DURATION_DAYS=90)
+        # Redirect the macOS plist second store into the temp dir so tests stay
+        # hermetic (this build host is darwin → the plist backend is live).
+        self._plist = str(Path(self.dir) / "second_store.plist")
+        self._ov = override_settings(
+            DATA_DIR=self.dir,
+            LICENSE_DURATION_DAYS=90,
+            LICENSE_PLIST_PATH=self._plist,
+        )
         self._ov.enable()
 
     def tearDown(self):
@@ -70,7 +80,31 @@ class OfflineLicenseTests(SimpleTestCase):
         self.assertEqual(lic.get_state()["state"], lic.ACTIVE)
 
     def test_is_write_blocked(self):
-        lic._file_write(lic._make_record(_ago(100), _ago(100)))
+        # Write through ALL stores: with a redundant second store, rewriting only
+        # one copy intentionally can't move the clock (see the macOS plist tests).
+        lic._write_all(lic._make_record(_ago(100), _ago(100)))
         self.assertTrue(lic.is_write_blocked())
-        lic._file_write(lic._make_record(_ago(1), _ago(1)))
+        lic._write_all(lic._make_record(_ago(1), _ago(1)))
         self.assertFalse(lic.is_write_blocked())
+
+    @skipUnless(sys.platform == "darwin", "macOS-only license second store")
+    def test_macos_plist_is_redundant_second_store(self):
+        # First run stamps both the DATA_DIR file and the macOS plist second store.
+        self.assertEqual(lic.get_state()["state"], lic.ACTIVE)
+        self.assertTrue(Path(self._plist).exists())
+        # Deleting the DATA_DIR copy must NOT reset the 90-day clock.
+        self._file().unlink()
+        state = lic.get_state()
+        self.assertEqual(state["state"], lic.ACTIVE)
+        self.assertGreaterEqual(state["days_remaining"], 89)
+        self.assertTrue(self._file().exists())  # self-healed from the plist
+
+    @skipUnless(sys.platform == "darwin", "macOS-only license second store")
+    def test_macos_forged_plist_is_tamper(self):
+        lic.get_state()  # stamp both stores
+        with Path(self._plist).open("rb") as fh:
+            rec = plistlib.load(fh)
+        rec["sig"] = "deadbeef"  # invalidate without re-signing
+        with Path(self._plist).open("wb") as fh:
+            plistlib.dump(rec, fh)
+        self.assertEqual(lic.get_state()["state"], lic.TAMPERED)

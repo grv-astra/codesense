@@ -8,7 +8,7 @@ class GeneralService extends BaseApiClient {
   }
 
   async fetchPermissionsByRole(role: PermissionRole): Promise<RolePermissions> {
-    return this.get<RolePermissions>(`/api/auth/permissions/${role}`);
+    return this.get<RolePermissions>(`/api/auth/permissions/${role}/`);
   }
 
   async updatePermissions(data: RolePermissions): Promise<RolePermissions> {
@@ -16,7 +16,7 @@ class GeneralService extends BaseApiClient {
   }
 
   async fetchMyPermissions(): Promise<RolePermissions>{
-    return this.get<RolePermissions>('/api/auth/permissions/me');
+    return this.get<RolePermissions>('/api/auth/permissions/me/');
   }
 }
 

@@ -27,9 +27,9 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico", "icons/icon.icns"],
     "externalBin": ["binaries/codesense-server", "binaries/llama-server"],
-    "resources": ["resources/*"],
+    "resources": ["resources/**/*"],
     "windows": {
       "webviewInstallMode": {
         "type": "fixedRuntime",

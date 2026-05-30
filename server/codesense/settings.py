@@ -108,13 +108,17 @@ DATABASES = {
 CORS_ALLOW_ALL_ORIGINS = DEBUG
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
-    "http://tauri.localhost",
+    "tauri://localhost",         # macOS / Linux webview origin (custom scheme)
+    "http://tauri.localhost",    # Windows webview origin
     "https://tauri.localhost",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:8585",
     "http://127.0.0.1:8585",
 ]
+# Belt-and-suspenders: match the custom tauri:// scheme by regex too, since some
+# django-cors-headers versions only exact-match http(s) entries in the list above.
+CORS_ALLOWED_ORIGIN_REGEXES = [r"^tauri://localhost$"]
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [

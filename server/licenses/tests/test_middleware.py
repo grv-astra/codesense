@@ -1,5 +1,6 @@
 import tempfile
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from django.http import JsonResponse
 from django.test import RequestFactory, SimpleTestCase, override_settings
@@ -15,7 +16,11 @@ def _ok_view(request):
 class ReadOnlyGraceMiddlewareTests(SimpleTestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
-        self._ov = override_settings(DATA_DIR=self.dir, LICENSE_DURATION_DAYS=90)
+        self._ov = override_settings(
+            DATA_DIR=self.dir,
+            LICENSE_DURATION_DAYS=90,
+            LICENSE_PLIST_PATH=str(Path(self.dir) / "second_store.plist"),
+        )
         self._ov.enable()
         self.mw = ReadOnlyGraceMiddleware(_ok_view)
         self.rf = RequestFactory()

@@ -10,12 +10,16 @@ class AuthService extends BaseApiClient {
     return this.get<User>('/api/auth/me/');
   }
 
+  // NOTE: the backend does not implement server-side logout/refresh (JWT is
+  // stateless). Logout still works because useAuth clears the token in onSettled
+  // regardless of this call. Paths are kept well-formed for when/if the backend
+  // adds these endpoints.
   async logout(): Promise<void> {
-    return this.post<void>('/auth/auth/logout');
+    return this.post<void>('/api/auth/logout/');
   }
 
   async refreshToken(): Promise<AuthResponse> {
-    return this.post<AuthResponse>('/auth/refresh');
+    return this.post<AuthResponse>('/api/auth/refresh/');
   }
 }
 

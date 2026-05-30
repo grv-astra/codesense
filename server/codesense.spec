@@ -10,6 +10,8 @@
 # SCAFFOLD: not built in the CI sandbox (PyInstaller here would yield a macOS/Linux
 # binary, not Windows). Validate on the Windows build host; Django's dynamic app
 # loading occasionally needs an extra hiddenimport — add as the build surfaces them.
+import os
+
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 _APPS = [
@@ -20,6 +22,26 @@ _APPS = [
 hiddenimports = []
 for pkg in _APPS:
     hiddenimports += collect_submodules(pkg)
+
+# The local apps expose routes as urls/ PACKAGES whose __init__ include()s DRF
+# sub-urlconfs by string (e.g. local.api_app.urls.scan_urls). Those submodules read
+# Django settings at import time, so collect_submodules (which imports each module
+# in an isolated subprocess with no configured Django) skips them, and PyInstaller
+# never follows the string include()s. Enumerate every .py in those url packages
+# from disk (no import) and bundle them so the runtime URLconf resolves.
+def _pkg_py_modules(*dotted_pkgs):
+    base = SPECPATH if "SPECPATH" in globals() else os.getcwd()
+    mods = []
+    for dotted in dotted_pkgs:
+        for root, _dirs, files in os.walk(os.path.join(base, *dotted.split("."))):
+            rel = os.path.relpath(root, base).split(os.sep)
+            for fn in files:
+                if fn.endswith(".py"):
+                    mods.append(".".join(rel) if fn == "__init__.py" else ".".join(rel + [fn[:-3]]))
+    return mods
+
+
+hiddenimports += _pkg_py_modules("local.auth_app.urls", "local.api_app.urls")
 
 datas = collect_data_files("rest_framework")
 

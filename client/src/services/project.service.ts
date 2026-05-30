@@ -3,11 +3,11 @@ import type { CreateProjectDetails, ProjectDetails, ProjectListResponse, UpdateP
 
 class ProjectService extends BaseApiClient {
   async getProjectById(projectId: string): Promise<ProjectDetails> {
-    return this.get<ProjectDetails>(`api/projects/${projectId}`);
+    return this.get<ProjectDetails>(`api/projects/${projectId}/`);
   }
 
   async getNames(): Promise<{id: string, name: string}[]> {
-    return this.get<{id: string, name: string}[]>(`api/projects/names`);
+    return this.get<{id: string, name: string}[]>(`api/projects/names/`);
   }
 
   async createProject(data: CreateProjectDetails): Promise<ProjectDetails> {
