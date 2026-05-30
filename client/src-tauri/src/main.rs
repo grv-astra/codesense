@@ -57,6 +57,15 @@ fn spawn_backend(app: &tauri::AppHandle) -> Option<CommandChild> {
         .env("VLLM_API_KEY", "EMPTY")
         .env("SCANNER_TOOLS_DIR", tools_dir.to_string_lossy().to_string())
         .env("GRYPE_DB_CACHE_DIR", grype_db.to_string_lossy().to_string())
+        .env("SEMGREP_BIN", tools_dir.join("semgrep").to_string_lossy().to_string())
+        .env(
+            "SEMGREP_RULES_DIR",
+            app.path()
+                .resolve("resources/semgrep-rules", BaseDirectory::Resource)
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        )
         .env("COSIGN_KEY_DIR", keys_dir.to_string_lossy().to_string())
         .args(["127.0.0.1", BACKEND_PORT]);
 

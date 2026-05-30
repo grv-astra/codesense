@@ -42,6 +42,31 @@ echo "Fetching Grant $GRANT_VERSION ..."; fetch_anchore grant "$GRANT_VERSION"
 echo "Fetching Cosign $COSIGN_VERSION ..."
 dl "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-${TARGET_OS}-${TARGET_ARCH}${ext}" "$OUT/cosign${ext}"
 
+# ------------- Semgrep / OpenGrep (SAST detector) -------------
+# OpenGrep is the OSS fork of Semgrep; it ships single-file native binaries
+# (Semgrep itself is a Python package, awkward to bundle). Same rule language.
+# NOTE: the release asset naming below is BEST-EFFORT and MUST be verified
+# against https://github.com/opengrep/opengrep/releases on the build host —
+# adjust ${OG_NAME} if the fetch 404s.
+OPENGREP_VERSION="${OPENGREP_VERSION:-1.4.0}"
+case "$TARGET_OS" in
+  darwin)  OG_OS="osx" ;;
+  linux)   OG_OS="manylinux" ;;
+  windows) OG_OS="windows" ;;
+esac
+case "$TARGET_ARCH" in
+  arm64) OG_ARCH="aarch64" ;;
+  amd64) OG_ARCH="x86" ;;
+esac
+echo "Fetching OpenGrep $OPENGREP_VERSION ($OG_OS/$OG_ARCH) ..."
+OG_NAME="opengrep_${OG_OS}_${OG_ARCH}"
+# Wrapped in a subshell so a 404 prints a warning instead of aborting under set -e.
+( dl "https://github.com/opengrep/opengrep/releases/download/v${OPENGREP_VERSION}/${OG_NAME}${ext}" \
+     "$OUT/semgrep${ext}" ) \
+  || echo "  WARNING: OpenGrep fetch failed — verify the asset name on the build host."
+chmod +x "$OUT/semgrep${ext}" 2>/dev/null || true
+echo "  staged: $OUT/semgrep${ext}"
+
 chmod +x "$OUT"/* 2>/dev/null || true
 echo "Tools in: $OUT"
 ls -la "$OUT"
