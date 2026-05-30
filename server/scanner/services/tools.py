@@ -39,6 +39,20 @@ def grype_offline_env() -> dict:
     return env
 
 
+def get_semgrep_bin() -> str:
+    """Resolve the Semgrep binary path.
+
+    Order: SEMGREP_BIN env var → <SCANNER_TOOLS_DIR>/semgrep → bare "semgrep" (PATH).
+    Delegates to the generic tool_path() resolver.
+    """
+    return tool_path("semgrep")
+
+
+def get_semgrep_rules_dir() -> str:
+    """Resolve the bundled Semgrep rule packs directory (empty if not bundled)."""
+    return os.environ.get("SEMGREP_RULES_DIR", "").strip()
+
+
 def cosign_paths():
     """(private_key, public_key, signing_config) for cosign, env-overridable.
 
