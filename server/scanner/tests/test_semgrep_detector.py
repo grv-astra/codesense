@@ -68,3 +68,12 @@ class RunSemgrepTests(SimpleTestCase):
     def test_returns_empty_on_semgrep_failure(self, mock_run, _bin, _rules):
         mock_run.return_value = mock.Mock(returncode=2, stdout="", stderr="rule load error")
         self.assertEqual(run_semgrep("/code"), [])
+
+    @mock.patch("scanner.rag.semgrep_detector.get_semgrep_rules_dir", return_value="/rules")
+    @mock.patch("scanner.rag.semgrep_detector.get_semgrep_bin", return_value="/bin/semgrep")
+    @mock.patch("scanner.rag.semgrep_detector.subprocess.run")
+    def test_rc1_returns_findings(self, mock_run, _bin, _rules):
+        """rc=1 is Semgrep's normal 'matches found' exit code; findings must be returned."""
+        mock_run.return_value = mock.Mock(returncode=1, stdout=FIXTURE.read_text(), stderr="")
+        findings = run_semgrep("/some/code/path")
+        self.assertEqual(len(findings), 1)

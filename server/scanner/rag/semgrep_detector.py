@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shlex
 import subprocess
 from typing import Any
 
@@ -64,7 +65,7 @@ def parse_semgrep_json(raw: str) -> list[SemgrepFinding]:
         return []
 
     findings: list[SemgrepFinding] = []
-    for r in doc.get("results", []) or []:
+    for r in doc.get("results", []) or []:   # `or []` guards an explicit "results": null
         if not isinstance(r, dict):
             continue
         extra = r.get("extra") or {}
@@ -101,7 +102,7 @@ def run_semgrep(folder_path: str) -> list[SemgrepFinding]:
             cmd += ["--config", pack]
     cmd += ["--json", "--quiet", "--metrics", "off", "--disable-version-check", folder_path]
 
-    logger.info("Running Semgrep: %s", " ".join(cmd))
+    logger.info("Running Semgrep: %s", shlex.join(cmd))
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=_TIMEOUT_SECONDS, check=False,
