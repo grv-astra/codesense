@@ -1,8 +1,8 @@
 {
   "cases": [
-    {"case_id": "py_sqli_unsafe", "file": "py_sqli.py", "lines": [4, 4], "cwe": "CWE-89", "label": "real", "language": "python"},
-    {"case_id": "py_sqli_safe", "file": "py_sqli.py", "lines": [7, 7], "cwe": "CWE-89", "label": "fake", "language": "python"},
-    {"case_id": "js_cmdi_unsafe", "file": "js_cmdi.js", "lines": [2, 2], "cwe": "CWE-78", "label": "real", "language": "javascript"},
-    {"case_id": "js_cmdi_safe", "file": "js_cmdi.js", "lines": [3, 3], "cwe": "CWE-78", "label": "fake", "language": "javascript"}
+    {"case_id": "py_sqli_unsafe", "file": "py_sqli_unsafe.py", "lines": [4, 4], "cwe": "CWE-89", "label": "real", "language": "python"},
+    {"case_id": "py_sqli_safe", "file": "py_sqli_safe.py", "lines": [4, 4], "cwe": "CWE-89", "label": "fake", "language": "python"},
+    {"case_id": "js_cmdi_unsafe", "file": "js_cmdi_unsafe.js", "lines": [2, 2], "cwe": "CWE-78", "label": "real", "language": "javascript"},
+    {"case_id": "js_cmdi_safe", "file": "js_cmdi_safe.js", "lines": [2, 2], "cwe": "CWE-78", "label": "fake", "language": "javascript"}
   ]
 }
