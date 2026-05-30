@@ -56,7 +56,7 @@ case "$TARGET_OS" in
 esac
 case "$TARGET_ARCH" in
   arm64) OG_ARCH="aarch64" ;;
-  amd64) OG_ARCH="x86" ;;
+  amd64) OG_ARCH="x86_64" ;;
 esac
 echo "Fetching OpenGrep $OPENGREP_VERSION ($OG_OS/$OG_ARCH) ..."
 OG_NAME="opengrep_${OG_OS}_${OG_ARCH}"
@@ -64,7 +64,6 @@ OG_NAME="opengrep_${OG_OS}_${OG_ARCH}"
 ( dl "https://github.com/opengrep/opengrep/releases/download/v${OPENGREP_VERSION}/${OG_NAME}${ext}" \
      "$OUT/semgrep${ext}" ) \
   || echo "  WARNING: OpenGrep fetch failed — verify the asset name on the build host."
-chmod +x "$OUT/semgrep${ext}" 2>/dev/null || true
 echo "  staged: $OUT/semgrep${ext}"
 
 chmod +x "$OUT"/* 2>/dev/null || true

@@ -13,3 +13,7 @@ class BundleEnvVarSmokeTests(SimpleTestCase):
                              clear=False):
             self.assertEqual(get_semgrep_bin(), "/fake/sem")
             self.assertEqual(get_semgrep_rules_dir(), "/fake/rules")
+
+    def test_semgrep_bin_falls_back_to_path_when_unset(self):
+        with mock.patch.dict(os.environ, {"SEMGREP_BIN": "", "SCANNER_TOOLS_DIR": ""}, clear=False):
+            self.assertEqual(get_semgrep_bin(), "semgrep")
