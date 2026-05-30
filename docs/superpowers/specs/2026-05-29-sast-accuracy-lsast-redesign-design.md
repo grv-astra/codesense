@@ -115,9 +115,11 @@ The model judges instead of searches, sees an **explicit dataflow** (the missing
 
 ## 7. Confidence fusion rules
 
+**`confidence` = the verifier's confidence in its own verdict** (NOT a function of Semgrep severity — severity is a separate axis, "how bad if real", carried in the `severity` field; the verifier is the "how likely real" judge). This keeps a fail-open low-confidence TP visibly uncertain instead of being inflated by severity.
+
 | LLM verdict | Semgrep severity | Outcome |
 |---|---|---|
-| `TP` | any | Show as TP. `confidence = max(Semgrep, LLM)` |
+| `TP` | any | Show as TP. `confidence = verdict.confidence` |
 | `FP` | `low` or `medium` | **Suppress** (write to filtered view, hidden by default) |
 | `FP` | `high` or `critical` | Keep as **"needs review"** (never silently drop a high-severity finding on a 3 B model's say-so) |
 | parse failure / timeout | any | Show as **low-confidence TP** (fail open) |
