@@ -97,3 +97,18 @@ class LsastScanFolderTests(SimpleTestCase):
         self.assertEqual(len(visible), 1)         # the good one survived
         self.assertEqual(len(filtered), 0)
         mock_save.assert_called_once()
+
+
+class LanguageRoutingTests(SimpleTestCase):
+    @mock.patch("scanner.rag.lsast_scanner.save_findings_to_db")
+    @mock.patch("scanner.rag.lsast_scanner.verify")
+    @mock.patch("scanner.rag.lsast_scanner.run_semgrep")
+    def test_verifier_gets_registry_language(self, mock_run, mock_verify, mock_save):
+        from scanner.rag.lsast_types import SemgrepFinding, VerifierVerdict
+        f = SemgrepFinding(rule_id="r", cwe="CWE-89", severity="high", message="m",
+                           file_path="src/Main.kt", start_line=1, end_line=2,
+                           code_excerpt="x", taint_trace=[], sanitizers_observed=[])
+        mock_run.return_value = [f]
+        mock_verify.return_value = VerifierVerdict("TP", "x", 0.9)
+        lsast_scan_folder("/tmp/code", "s1", "u1")
+        self.assertEqual(mock_verify.call_args.kwargs["language"], "kotlin")

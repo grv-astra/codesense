@@ -8,25 +8,15 @@ surface is unchanged.
 from __future__ import annotations
 
 import logging
-import os
 
 from scanner.rag.database import save_findings_to_db
 from scanner.rag.finding_normalizer import normalize
 from scanner.rag.fusion import fuse
+from scanner.rag.languages import language_for_path
 from scanner.rag.llm_verifier import verify
 from scanner.rag.semgrep_detector import run_semgrep
 
 logger = logging.getLogger(__name__)
-
-
-def _language_from_path(file_path: str) -> str:
-    ext = os.path.splitext(file_path)[1].lstrip(".").lower()
-    return {
-        "py": "python", "js": "javascript", "ts": "typescript", "tsx": "typescript",
-        "jsx": "javascript", "java": "java", "go": "go", "rb": "ruby",
-        "php": "php", "cs": "csharp", "c": "c", "cc": "cpp", "cpp": "cpp",
-        "rs": "rust",
-    }.get(ext, ext or "text")
 
 
 def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str
@@ -45,7 +35,7 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str
             finding_dict, dataflow = normalize(sf, scan_id=scan_id, triggered_by=triggered_by)
             verdict = verify(
                 cwe=sf.cwe,
-                language=_language_from_path(sf.file_path),
+                language=language_for_path(sf.file_path).name,
                 dataflow=dataflow,
                 code_excerpt=sf.code_excerpt,
             )
