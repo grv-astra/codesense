@@ -80,3 +80,20 @@ class LsastScanFolderTests(SimpleTestCase):
         mock_verify.return_value = VerifierVerdict("TP", "x", 0.8)
         lsast_scan_folder("/tmp/code", "s1", "user-1")
         self.assertEqual(mock_verify.call_args.kwargs["language"], "python")
+
+    @mock.patch("scanner.rag.lsast_scanner.save_findings_to_db")
+    @mock.patch("scanner.rag.lsast_scanner.verify")
+    @mock.patch("scanner.rag.lsast_scanner.normalize")
+    @mock.patch("scanner.rag.lsast_scanner.run_semgrep")
+    def test_one_bad_finding_does_not_abort_the_batch(self, mock_run, mock_normalize, mock_verify, mock_save):
+        from scanner.rag.lsast_types import DataflowContext
+        mock_run.return_value = [_sqli_finding(), _safe_orm_finding()]
+        # First finding blows up in normalize; second normalizes fine.
+        good_dict = {"severity": "high", "title": "ok", "status": "open", "cwe": "CWE-89"}
+        good_ctx = DataflowContext(source_line=1, source_code="x", sink_line=2, sink_code="y")
+        mock_normalize.side_effect = [RuntimeError("boom"), (good_dict, good_ctx)]
+        mock_verify.return_value = VerifierVerdict("TP", "real", 0.9)
+        visible, filtered = lsast_scan_folder("/tmp/code", "s1", "user-1")
+        self.assertEqual(len(visible), 1)         # the good one survived
+        self.assertEqual(len(filtered), 0)
+        mock_save.assert_called_once()

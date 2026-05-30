@@ -41,14 +41,21 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str
     filtered: list[dict] = []
 
     for sf in sem_findings:
-        finding_dict, dataflow = normalize(sf, scan_id=scan_id, triggered_by=triggered_by)
-        verdict = verify(
-            cwe=sf.cwe,
-            language=_language_from_path(sf.file_path),
-            dataflow=dataflow,
-            code_excerpt=sf.code_excerpt,
-        )
-        outcome = fuse(finding_dict, verdict)
+        try:
+            finding_dict, dataflow = normalize(sf, scan_id=scan_id, triggered_by=triggered_by)
+            verdict = verify(
+                cwe=sf.cwe,
+                language=_language_from_path(sf.file_path),
+                dataflow=dataflow,
+                code_excerpt=sf.code_excerpt,
+            )
+            outcome = fuse(finding_dict, verdict)
+        except Exception as exc:  # one malformed finding must not sink the batch
+            logger.warning(
+                "LSAST: skipping finding %s — processing error: %s",
+                getattr(sf, "rule_id", "?"), exc,
+            )
+            continue
         if outcome.action == "suppress":
             filtered.append(outcome.finding)
         else:
