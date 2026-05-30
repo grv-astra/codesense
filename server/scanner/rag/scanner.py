@@ -4,6 +4,7 @@ from .analysis import scan_single_file
 from .database import save_findings_to_db
 from .progress import update_progress, display_progress
 from .ast_parser import analyze_folder   # <-- NEW
+from .lsast_scanner import lsast_scan_folder
 from .llm import get_ready_llm
 from datetime import datetime, timezone
 import traceback
@@ -14,6 +15,51 @@ logger = logging.getLogger(__name__)
 
 
 def scan_folder(folder_path, scan_id, triggered_by, scan_name):
+    """Route to the LSAST or legacy engine based on the SCAN_ENGINE env var.
+
+    SCAN_ENGINE=lsast  → Semgrep + LLM verifier (Phase 1 of the SAST redesign)
+    SCAN_ENGINE=legacy → original LLM-primary scanner (default during Phase 1)
+    """
+    engine = (os.environ.get("SCAN_ENGINE") or "legacy").strip().lower()
+    if engine == "lsast":
+        logger.info("scan_folder: routing to LSAST engine")
+        return _lsast_scan_folder(folder_path, scan_id, triggered_by, scan_name)
+    logger.info("scan_folder: routing to legacy engine")
+    return _legacy_scan_folder(folder_path, scan_id, triggered_by, scan_name)
+
+
+def _lsast_scan_folder(folder_path, scan_id, triggered_by, scan_name):
+    """LSAST engine with the same scan lifecycle as the legacy path.
+
+    Mirrors _legacy_scan_folder's bookkeeping (AST metrics → in_progress →
+    completed) but delegates detection to the Semgrep+verifier pipeline.
+    """
+    try:
+        ast_metrics = analyze_folder(folder_path)
+        update_progress(scan_id=scan_id, metrics=ast_metrics)
+        logger.info(
+            "AST Completed → LOC: %s | Functions: %s | Languages: %s",
+            ast_metrics.get("total_loc"), ast_metrics.get("total_functions"),
+            ast_metrics.get("languages"),
+        )
+    except Exception as e:
+        logger.error("AST Analysis failed: %s\n%s", e, traceback.format_exc())
+        update_progress(scan_id=scan_id, error=str(e))
+        return []
+
+    update_progress(scan_id=scan_id, status="in_progress")
+    visible, _filtered = lsast_scan_folder(folder_path, scan_id, triggered_by)
+    update_progress(
+        scan_id=scan_id,
+        findings=len(visible),
+        status="completed",
+        end_time=datetime.now(timezone.utc),
+    )
+    logger.info("LSAST scan completed: %d findings for %s", len(visible), scan_name or "Unknown")
+    return visible
+
+
+def _legacy_scan_folder(folder_path, scan_id, triggered_by, scan_name):
     """
     1. Perform AST analysis (LOC, functions, languages)
     2. Save metrics to scan document
