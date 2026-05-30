@@ -1,0 +1,67 @@
+"""LSAST orchestrator: Semgrep detector → normalizer → verifier → fusion → persist.
+
+Returns (visible_findings, filtered_findings) so the caller can render both, and
+persists only the visible/needs_review set via the existing save_findings_to_db()
+helper (which drops keys not on the Finding model). The legacy file/dashboard
+surface is unchanged.
+"""
+from __future__ import annotations
+
+import logging
+import os
+
+from scanner.rag.database import save_findings_to_db
+from scanner.rag.finding_normalizer import normalize
+from scanner.rag.fusion import fuse
+from scanner.rag.llm_verifier import verify
+from scanner.rag.semgrep_detector import run_semgrep
+
+logger = logging.getLogger(__name__)
+
+
+def _language_from_path(file_path: str) -> str:
+    ext = os.path.splitext(file_path)[1].lstrip(".").lower()
+    return {
+        "py": "python", "js": "javascript", "ts": "typescript", "tsx": "typescript",
+        "jsx": "javascript", "java": "java", "go": "go", "rb": "ruby",
+        "php": "php", "cs": "csharp", "c": "c", "cc": "cpp", "cpp": "cpp",
+        "rs": "rust",
+    }.get(ext, ext or "text")
+
+
+def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str
+                      ) -> tuple[list[dict], list[dict]]:
+    """Run the full LSAST pipeline. Returns (visible, filtered)."""
+    sem_findings = run_semgrep(folder_path)
+    if not sem_findings:
+        logger.info("LSAST: Semgrep produced no findings for %s", folder_path)
+        return [], []
+
+    visible: list[dict] = []
+    filtered: list[dict] = []
+
+    for sf in sem_findings:
+        finding_dict, dataflow = normalize(sf, scan_id=scan_id, triggered_by=triggered_by)
+        verdict = verify(
+            cwe=sf.cwe,
+            language=_language_from_path(sf.file_path),
+            dataflow=dataflow,
+            code_excerpt=sf.code_excerpt,
+        )
+        outcome = fuse(finding_dict, verdict)
+        if outcome.action == "suppress":
+            filtered.append(outcome.finding)
+        else:
+            visible.append(outcome.finding)
+
+    if visible:
+        save_findings_to_db(visible)
+
+    logger.info(
+        "LSAST done: %d Semgrep → %d visible (%d needs_review) + %d filtered",
+        len(sem_findings),
+        len(visible),
+        sum(1 for f in visible if f.get("status") == "needs_review"),
+        len(filtered),
+    )
+    return visible, filtered
