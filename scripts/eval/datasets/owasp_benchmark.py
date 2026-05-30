@@ -23,7 +23,10 @@ def parse_expectedresults(csv_path, src_root: str) -> list[Case]:
             name = row[0].strip()
             if not name or len(row) < 4:
                 continue
-            is_real = row[2].strip().lower() == "true"
+            real_str = row[2].strip().lower()
+            if real_str not in ("true", "false"):
+                continue
+            is_real = real_str == "true"
             cwe = f"CWE-{row[3].strip()}"
             cases.append(Case(
                 case_id=name,

@@ -41,6 +41,12 @@ class SampleTests(unittest.TestCase):
         self.assertEqual(len([c for c in sample if c.is_real]), 3)
         self.assertEqual(len([c for c in sample if not c.is_real]), 3)
 
+    def test_balanced_sample_handles_fewer_than_requested(self):
+        from eval.matching import Case
+        cases = [Case("r0", "/s/r0.java", True, "CWE-89")]  # only 1 real, 0 fake
+        sample = build_balanced_sample(cases, per_class=5)
+        self.assertEqual(len(sample), 1)
+
 
 class _V:
     def __init__(self, verdict): self.verdict = verdict
@@ -61,6 +67,30 @@ class VerifierTierTests(unittest.TestCase):
         self.assertEqual(counts.tp, 2)   # both is_real CWE-89 kept
         self.assertEqual(counts.tn, 1)
         self.assertEqual(len(calls), 2)  # third reused cache
+
+    def test_verifier_fake_kept_is_fp(self):
+        # fake finding the verifier KEEPS (says TP) is a false positive
+        def verify_fn(**kw):
+            class V: verdict = "TP"
+            return V()
+        samples = [{"cwe": "CWE-89", "language": "py", "dataflow": "d", "code": "z", "is_real": False}]
+        counts = run_verifier_tier(samples, verify_fn=verify_fn)
+        self.assertEqual(counts.fp, 1)
+
+    def test_verifier_cache_roundtrips_to_disk(self):
+        import tempfile, os
+        calls = []
+        def verify_fn(**kw):
+            calls.append(1)
+            class V: verdict = "TP"
+            return V()
+        sample = [{"cwe": "CWE-89", "language": "py", "dataflow": "d", "code": "q", "is_real": True}]
+        with tempfile.TemporaryDirectory() as d:
+            cache = os.path.join(d, "c.json")
+            run_verifier_tier(sample, verify_fn=verify_fn, cache_path=cache)
+            self.assertTrue(os.path.exists(cache))
+            run_verifier_tier(sample, verify_fn=verify_fn, cache_path=cache)  # 2nd run hits disk cache
+        self.assertEqual(len(calls), 1)  # verify_fn called only once across both runs
 
 
 if __name__ == "__main__":

@@ -40,3 +40,7 @@ class LanguageRegistryTests(SimpleTestCase):
         self.assertEqual(cobol.name, "cobol")
         self.assertEqual(cobol.coverage, "none")
         self.assertIsNone(cobol.semgrep_lang)
+
+    def test_extensionless_dockerfile_resolves(self):
+        self.assertEqual(language_for_path("Dockerfile").name, "dockerfile")
+        self.assertEqual(language_for_path("deploy/Dockerfile").name, "dockerfile")

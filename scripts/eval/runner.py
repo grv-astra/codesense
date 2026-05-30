@@ -37,7 +37,7 @@ def run_detector_tier(cases: list[Case], scan_fn) -> Counts:
     return c
 
 
-def run_detector_tier_by_language(cases: list[Case], scan_fn, lang_fn) -> dict:
+def run_detector_tier_by_language(cases: list[Case], scan_fn, lang_fn) -> dict[str, Counts]:
     """Like run_detector_tier but grouped by lang_fn(source_path) -> language name."""
     by_lang: dict[str, Counts] = {}
     for case in cases:

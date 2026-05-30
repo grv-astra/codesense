@@ -54,8 +54,8 @@ LANGUAGES: list[Language] = [
     Language("yaml", (".yaml", ".yml"), "yaml", "partial"),
     Language("json", (".json",), "json", "partial"),
     Language("html", (".html", ".htm"), "html", "partial"),
-    Language("sql", (".sql",), "generic", "partial"),
-    Language("groovy", (".groovy", ".gradle"), "generic", "partial"),
+    Language("sql", (".sql",), "generic", "partial"),   # generic = regex-pattern mode only (no AST)
+    Language("groovy", (".groovy", ".gradle"), "generic", "partial"),   # generic = regex-pattern mode only
     Language("perl", (".pl", ".pm"), None, "none"),
     Language("powershell", (".ps1", ".psm1"), None, "none"),
     Language("objectivec", (".m", ".mm"), None, "none"),

@@ -33,6 +33,11 @@ class MatchingTests(unittest.TestCase):
         finding = {"file_path": "app/views.py [1,2]", "cwe": "CWE-79"}
         self.assertFalse(finding_hits_case(finding, case))
 
+    def test_finding_hits_case_via_cwe_alias(self):
+        case = Case(case_id="t", source_path="app/q.java", is_real=True, cwe="CWE-89")
+        finding = {"file_path": "app/q.java [3,5]", "cwe": "CWE-943"}  # 943 aliases to 89
+        self.assertTrue(finding_hits_case(finding, case))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,7 @@ import os
 import re
 from dataclasses import dataclass
 
+# Unlisted CWEs map to themselves (dict.get(n, n)); only aliases need entries.
 # CWE families: alias variants → a canonical CWE for family comparison.
 _FAMILY_ALIASES = {
     943: 89,   # improper neutralization in a data query → SQLi
@@ -48,6 +49,7 @@ def _finding_file(finding: dict) -> str:
 
 def finding_hits_case(finding: dict, case: Case) -> bool:
     """A finding hits a case if it's in the same source file and CWE family."""
+    # Basename-only match: OWASP/curated filenames are unique, so this is safe; same-named files in different dirs would collide.
     if os.path.basename(_finding_file(finding)) != os.path.basename(case.source_path):
         return False
     return same_cwe_family(finding.get("cwe", ""), case.cwe)
