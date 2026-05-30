@@ -42,14 +42,24 @@ def same_cwe_family(a: str, b: str) -> bool:
     return na is not None and na == nb
 
 
-def _finding_file(finding: dict) -> str:
-    raw = finding.get("file_path", "")
+def _get(finding, key: str) -> str:
+    """Read a field from a finding that may be a dict OR an object with attrs."""
+    if isinstance(finding, dict):
+        return finding.get(key, "") or ""
+    return getattr(finding, key, "") or ""
+
+
+def _finding_file(finding) -> str:
+    # finding's file_path may be "<path> [start,end]" (normalized dict) or a bare
+    # path (raw SemgrepFinding) — strip a trailing [n,m] suffix if present.
+    raw = _get(finding, "file_path")
     return re.sub(r"\s*\[\d+,\d+\]\s*$", "", raw).strip()
 
 
-def finding_hits_case(finding: dict, case: Case) -> bool:
-    """A finding hits a case if it's in the same source file and CWE family."""
-    # Basename-only match: OWASP/curated filenames are unique, so this is safe; same-named files in different dirs would collide.
+def finding_hits_case(finding, case: Case) -> bool:
+    """A finding (dict or SemgrepFinding) hits a case if same source file + CWE family."""
+    # Basename-only match: OWASP/curated filenames are unique, so this is safe;
+    # same-named files in different dirs would collide.
     if os.path.basename(_finding_file(finding)) != os.path.basename(case.source_path):
         return False
-    return same_cwe_family(finding.get("cwe", ""), case.cwe)
+    return same_cwe_family(_get(finding, "cwe"), case.cwe)

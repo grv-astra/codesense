@@ -38,6 +38,20 @@ class MatchingTests(unittest.TestCase):
         finding = {"file_path": "app/q.java [3,5]", "cwe": "CWE-943"}  # 943 aliases to 89
         self.assertTrue(finding_hits_case(finding, case))
 
+    def test_finding_hits_case_accepts_object_not_just_dict(self):
+        class _SF:  # mimics scanner.rag.lsast_types.SemgrepFinding (attrs, no .get)
+            file_path = "app/q.py"
+            cwe = "CWE-89"
+        case = Case(case_id="t", source_path="x/app/q.py", is_real=True, cwe="CWE-89")
+        self.assertTrue(finding_hits_case(_SF(), case))
+
+    def test_object_finding_wrong_family_misses(self):
+        class _SF:
+            file_path = "app/q.py"
+            cwe = "CWE-79"
+        case = Case(case_id="t", source_path="app/q.py", is_real=True, cwe="CWE-89")
+        self.assertFalse(finding_hits_case(_SF(), case))
+
 
 if __name__ == "__main__":
     unittest.main()
