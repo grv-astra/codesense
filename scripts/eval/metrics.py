@@ -19,7 +19,7 @@ def _safe_div(a: float, b: float) -> float:
     return a / b if b else 0.0
 
 
-def compute(c: Counts) -> dict:
+def compute(c: Counts) -> dict[str, float]:
     precision = _safe_div(c.tp, c.tp + c.fp)
     recall = _safe_div(c.tp, c.tp + c.fn)
     f1 = _safe_div(2 * precision * recall, precision + recall)
@@ -38,5 +38,5 @@ def meets_thresholds(metrics: dict) -> tuple[bool, list[str]]:
     if metrics.get("recall", 0.0) < THRESHOLDS["recall"]:
         failures.append(f"recall {metrics.get('recall', 0):.3f} < {THRESHOLDS['recall']}")
     if metrics.get("fp_rate", 1.0) > THRESHOLDS["fp_rate_max"]:
-        failures.append(f"fp_rate {metrics.get('fp_rate', 1):.3f} > {THRESHOLDS['fp_rate_max']}")
+        failures.append(f"fp_rate {metrics.get('fp_rate', 1.0):.3f} > {THRESHOLDS['fp_rate_max']}")
     return (not failures, failures)
