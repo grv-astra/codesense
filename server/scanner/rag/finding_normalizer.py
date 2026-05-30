@@ -50,7 +50,7 @@ def normalize(f: SemgrepFinding, scan_id: str, triggered_by: str) -> tuple[dict,
     """Return (legacy_finding_dict, dataflow_context). The dict matches extract.py's shape."""
     cvss_score, cvss_vector = _CVSS_BY_SEVERITY.get(
         f.severity, ("5.0", "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:L/I:L/A:N"))
-    num = _cwe_number(f.cwe)
+    num = _cwe_number(f.cwe or "")
     reference = f"https://cwe.mitre.org/data/definitions/{num}.html" if num else "NA"
 
     finding = {
@@ -64,7 +64,7 @@ def normalize(f: SemgrepFinding, scan_id: str, triggered_by: str) -> tuple[dict,
         "severity": f.severity,
         "file_path": f"{f.file_path} [{f.start_line},{f.end_line}]",
         "code_snip": (f.code_excerpt or "")[:2000],
-        "security_risk": f.message[:1000] if f.message else "",
+        "security_risk": f.message[:1000] if f.message else "",   # legacy schema: same text as description for now; verifier enriches later
         "mitigation": "",
         "status": "open",
         "deleted": False,

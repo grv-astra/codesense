@@ -51,6 +51,12 @@ class BuildDataflowContextTests(SimpleTestCase):
         self.assertEqual(ctx.source_code, "")
         self.assertEqual(ctx.sink_code, "")
 
+    def test_sanitizers_observed_round_trip(self):
+        f = _sample_finding()
+        f.sanitizers_observed = ["html.escape"]
+        ctx = build_dataflow_context(f)
+        self.assertEqual(ctx.sanitizers_observed, ["html.escape"])
+
 
 class NormalizeTests(SimpleTestCase):
     def test_produces_finding_dict_matching_existing_shape(self):
