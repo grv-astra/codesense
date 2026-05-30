@@ -41,3 +41,25 @@ class LsastTypesTests(SimpleTestCase):
     def test_verifier_verdict_invalid_json_returns_none(self):
         self.assertIsNone(VerifierVerdict.from_json("not json"))
         self.assertIsNone(VerifierVerdict.from_json('{"verdict":"MAYBE"}'))   # invalid verdict
+
+    def test_semgrep_finding_default_lists_are_independent(self):
+        # Guard the field(default_factory=list) wiring (no shared mutable default).
+        a = SemgrepFinding(rule_id="r", cwe="", severity="low", message="m",
+                           file_path="f", start_line=1, end_line=1, code_excerpt="c")
+        b = SemgrepFinding(rule_id="r", cwe="", severity="low", message="m",
+                           file_path="f", start_line=1, end_line=1, code_excerpt="c")
+        a.taint_trace.append((1, "x"))
+        self.assertEqual(a.taint_trace, [(1, "x")])
+        self.assertEqual(b.taint_trace, [])          # not shared
+        self.assertEqual(b.sanitizers_observed, [])
+
+    def test_verifier_verdict_missing_reason_defaults_to_empty(self):
+        v = VerifierVerdict.from_json('{"verdict":"TP","confidence":0.7}')
+        self.assertIsNotNone(v)
+        self.assertEqual(v.reason, "")
+
+    def test_verifier_verdict_confidence_is_clamped(self):
+        v_high = VerifierVerdict.from_json('{"verdict":"TP","reason":"x","confidence":2.5}')
+        self.assertAlmostEqual(v_high.confidence, 1.0)
+        v_low = VerifierVerdict.from_json('{"verdict":"TP","reason":"x","confidence":-0.5}')
+        self.assertAlmostEqual(v_low.confidence, 0.0)
