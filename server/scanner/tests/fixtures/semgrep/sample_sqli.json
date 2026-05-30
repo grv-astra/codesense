@@ -1,0 +1,29 @@
+{
+  "version": "1.0.0",
+  "results": [
+    {
+      "check_id": "python.lang.security.audit.sql-injection.tainted-sql-string",
+      "path": "app/views.py",
+      "start": {"line": 12, "col": 5},
+      "end":   {"line": 18, "col": 40},
+      "extra": {
+        "message": "Possible SQL injection: user-controlled data flows into a SQL statement.",
+        "severity": "ERROR",
+        "metadata": {
+          "cwe": ["CWE-89: Improper Neutralization of Special Elements used in an SQL Command"],
+          "owasp": ["A03:2021 - Injection"]
+        },
+        "lines": "q = request.GET['q']\nquery = \"SELECT * FROM u WHERE name='\" + q + \"'\"\ncursor.execute(query)",
+        "dataflow_trace": {
+          "taint_source": [{"start": {"line": 12}, "code": "request.GET['q']"}],
+          "intermediate_vars": [
+            {"location": {"line": 14}, "content": "query = \"SELECT ...\" + q + \"...\""}
+          ],
+          "taint_sink": [{"start": {"line": 18}, "code": "cursor.execute(query)"}]
+        }
+      }
+    }
+  ],
+  "errors": [],
+  "paths": {"scanned": ["app/views.py"]}
+}
