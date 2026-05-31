@@ -45,6 +45,15 @@ SEMGREP_RULES_DIR=/path/to/semgrep-rules-python-and-javascript \
    YAML (e.g. `.pre-commit-config.yaml` lacks a top-level `rules` key). **Fix:** bundle
    only the language rule subdirs (or strip non-rule YAMLs) — pointing at a clean
    `{python,javascript,...}` dir works. *(Until fixed, a packaged scan finds nothing.)*
+   **FIXED (2026-05-31, commit `1880aae`):** added
+   `scripts/offline_sbom/stage_semgrep_rules.py`, which clones the repo and prunes
+   every YAML lacking a top-level `rules:` key (78 in the current clone; note the
+   offenders include nested `*.test.yaml`, so pointing at language subdirs alone is
+   *not* enough), leaving a valid `--config` target. `build_macos.sh` now calls it;
+   `build_windows.ps1` previously bundled no rules **and no semgrep binary** — both
+   were added (OpenGrep staged as `semgrep.exe`). Verified: `semgrep --config <staged>`
+   over the curated fixtures returns **rc=0** (was 7), flags both unsafe cases, and
+   clears both safe ones. Guarded by `scripts/offline_sbom/tests/test_stage_semgrep_rules.py`.
 2. **Default registry packs find nothing offline.** `run_semgrep`'s fallback packs
    (`p/security-audit`, `p/owasp-top-ten`, `p/secrets`) returned 0 findings (likely need
    `semgrep login`/registry fetch). The bundled-rules path (SEMGREP_RULES_DIR) is the
@@ -55,8 +64,9 @@ SEMGREP_RULES_DIR=/path/to/semgrep-rules-python-and-javascript \
 4. **`run_eval.py`/README must use the venv python**, not system `python3` (Django+DRF).
 
 ## Recommended next steps (follow-on, not in this plan)
-- Fix the build script's rule bundling (issue 1) — highest priority; without it the
-  shipped scanner detects nothing.
+- ~~Fix the build script's rule bundling (issue 1) — highest priority; without it the
+  shipped scanner detects nothing.~~ **DONE** — see issue 1 above (staging helper + tests;
+  Windows semgrep binary also added).
 - Grow the curated set across more of the top-40 languages.
 - Run the OWASP Benchmark detector tier for a real headline F1/recall.
 - Run the sampled verifier tier against llama-server to measure FP suppression.
