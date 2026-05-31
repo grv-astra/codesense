@@ -144,24 +144,21 @@ else
 fi
 
 # --------------------------------------------------------------------------- #
-# 5b. Semgrep rule packs (offline) — clone the official semgrep-rules repo
+# 5b. Semgrep rule packs (offline)
 # --------------------------------------------------------------------------- #
+# The launcher points SEMGREP_RULES_DIR (= `semgrep --config`) at this dir's
+# ROOT. Semgrep aborts the entire scan with rc=7 ("invalid configuration file
+# found") if --config loads any YAML lacking a top-level `rules:` key — and the
+# upstream repo ships plenty (.pre-commit-config.yaml, CI workflows, nested
+# */*.test.yaml fixtures), so an UNPRUNED clone makes a packaged scan silently
+# find NOTHING. stage_semgrep_rules.py clones the repo and keeps only loadable
+# rule files, leaving a valid --config target. A marker makes re-runs skip the
+# re-clone; a clone failure is a warning, not a build abort (like the Grype DB
+# step). Regression-guarded by scripts/offline_sbom/tests/test_stage_semgrep_rules.py.
 info "Bundling Semgrep rule packs"
 RULES_DIR="$TAURI/resources/semgrep-rules"
-if [ -d "$RULES_DIR/.git" ]; then
-  ok "semgrep-rules already present; skipping clone"
-else
-  rm -rf "$RULES_DIR"
-  # Wrapped in a subshell so a network failure prints a warning instead of
-  # aborting the whole build under set -e (consistent with the Grype DB
-  # WARNING above for missing binaries).
-  ( git clone --depth 1 https://github.com/semgrep/semgrep-rules "$RULES_DIR" ) \
-    && ok "semgrep-rules cloned into $RULES_DIR" \
-    || echo "    WARNING: semgrep-rules clone failed (needs network on the build host)."
-fi
-# The detector runs `semgrep --config <SEMGREP_RULES_DIR>`; a directory of .yml
-# rules is a valid --config target. To trim size, prune non-security language
-# packs here if desired.
+python3 "$SCRIPT_DIR/offline_sbom/stage_semgrep_rules.py" "$RULES_DIR" \
+  || echo "    WARNING: semgrep-rules staging failed (see above); a packaged scan finds nothing until rules are staged."
 
 # --------------------------------------------------------------------------- #
 # 6. App icons (.icns + pngs). No WebView2 step — macOS uses the system WKWebView.

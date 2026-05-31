@@ -149,8 +149,23 @@ if (-not $SkipTools) {
   }
   Get-GhAsset "sigstore/cosign" "cosign-windows-amd64\.exe$" (Join-Path $ResTools "cosign.exe")
 
+  # OpenGrep (OSS Semgrep fork) — a single-file native binary, staged as
+  # semgrep.exe (the launcher sets SEMGREP_BIN to <tools>\semgrep). Pinned to
+  # match the macOS build (scripts/offline_sbom/fetch_offline_tools.sh) so both
+  # platforms ship the same detector. Best-effort: a 404 is a warning (verify
+  # the asset name on the build host), not a build abort — but without it the
+  # packaged scan has no SAST detector.
+  $OpengrepVersion = "1.4.0"
+  $ogUrl = "https://github.com/opengrep/opengrep/releases/download/v$OpengrepVersion/opengrep_windows_x86_64.exe"
+  try {
+    Invoke-WebRequest -Uri $ogUrl -OutFile (Join-Path $ResTools "semgrep.exe") -UseBasicParsing
+    Ok "opengrep $OpengrepVersion staged as resources\tools\semgrep.exe"
+  } catch {
+    Write-Warning "OpenGrep fetch failed ($ogUrl): $($_.Exception.Message). Verify the asset at https://github.com/opengrep/opengrep/releases; the packaged scan has no SAST detector until semgrep.exe is staged."
+  }
+
   Remove-Item $tmp -Recurse -Force
-  Ok "syft/grype/grant/cosign staged in resources\tools"
+  Ok "syft/grype/grant/cosign/semgrep staged in resources\tools"
 } else { Info "Skipping SBOM tool download (-SkipTools)" }
 
 # --------------------------------------------------------------------------- #
@@ -168,6 +183,26 @@ if (Test-Path $grypeExe) {
   }
 } else {
   Write-Warning "grype.exe not staged; skipping DB snapshot. Re-run without -SkipTools."
+}
+
+# --------------------------------------------------------------------------- #
+# 5b. Semgrep rule packs (offline)
+# --------------------------------------------------------------------------- #
+# The launcher points SEMGREP_RULES_DIR (= `semgrep --config`) at this dir's
+# ROOT. Semgrep aborts the whole scan with rc=7 ("invalid configuration file
+# found") if --config loads any YAML lacking a top-level `rules:` key, and the
+# upstream repo ships many (.pre-commit-config.yaml, CI workflows, nested
+# *.test.yaml fixtures). The staging helper clones semgrep-rules and keeps only
+# loadable rule files, leaving a valid --config target. Non-fatal on failure
+# (the scan then finds nothing until rules are staged), matching the Grype DB
+# step; needs git + network on the build host. Guarded by
+# scripts\offline_sbom\tests\test_stage_semgrep_rules.py.
+Info "Bundling Semgrep rule packs"
+$RulesDir   = Join-Path $Tauri "resources\semgrep-rules"
+$StageRules = Join-Path $PSScriptRoot "offline_sbom\stage_semgrep_rules.py"
+& python $StageRules $RulesDir
+if ($LASTEXITCODE -ne 0) {
+  Write-Warning "semgrep-rules staging failed (needs git + network on the build host); the packaged scan will find nothing until rules are staged."
 }
 
 # --------------------------------------------------------------------------- #
