@@ -4,7 +4,8 @@ from unittest import mock
 
 from django.test import SimpleTestCase
 
-from scanner.rag.semgrep_detector import run_semgrep, parse_semgrep_json
+from scanner.rag.semgrep_detector import (
+    run_semgrep, parse_semgrep_json, derive_cwe, _extract_taint_trace)
 from scanner.rag.lsast_types import SemgrepFinding
 
 
@@ -65,6 +66,22 @@ class RunSemgrepTests(SimpleTestCase):
     @mock.patch("scanner.rag.semgrep_detector.get_semgrep_rules_dir", return_value="/rules")
     @mock.patch("scanner.rag.semgrep_detector.get_semgrep_bin", return_value="/bin/semgrep")
     @mock.patch("scanner.rag.semgrep_detector.subprocess.run")
+    def test_forces_utf8_env_and_omits_metrics_flag(self, mock_run, _bin, _rules):
+        # The bundled engine is OpenGrep: it rejects --metrics (rc=2) and reads
+        # rule YAMLs with the process locale, so we drop the flag and force UTF-8.
+        mock_run.return_value = mock.Mock(returncode=0, stdout='{"results":[]}', stderr="")
+        run_semgrep("/code")
+        cmd = mock_run.call_args.args[0]
+        self.assertNotIn("--metrics", cmd)
+        env = mock_run.call_args.kwargs["env"]
+        self.assertEqual(env["LC_ALL"], "C.UTF-8")
+        self.assertEqual(env["LANG"], "C.UTF-8")
+        self.assertEqual(env["PYTHONUTF8"], "1")
+        self.assertEqual(env["SEMGREP_SEND_METRICS"], "off")
+
+    @mock.patch("scanner.rag.semgrep_detector.get_semgrep_rules_dir", return_value="/rules")
+    @mock.patch("scanner.rag.semgrep_detector.get_semgrep_bin", return_value="/bin/semgrep")
+    @mock.patch("scanner.rag.semgrep_detector.subprocess.run")
     def test_returns_empty_on_semgrep_failure(self, mock_run, _bin, _rules):
         mock_run.return_value = mock.Mock(returncode=2, stdout="", stderr="rule load error")
         self.assertEqual(run_semgrep("/code"), [])
@@ -77,3 +94,76 @@ class RunSemgrepTests(SimpleTestCase):
         mock_run.return_value = mock.Mock(returncode=1, stdout=FIXTURE.read_text(), stderr="")
         findings = run_semgrep("/some/code/path")
         self.assertEqual(len(findings), 1)
+
+
+class DeriveCweTests(SimpleTestCase):
+    """Layered CWE derivation: explicit -> rule-name keyword -> OWASP -> category."""
+
+    def test_explicit_cwe_string_and_int(self):
+        self.assertEqual(derive_cwe({"cwe": "CWE-89: SQLi"}, "x"), "CWE-89")
+        self.assertEqual(derive_cwe({"cwe": [89]}, "x"), "CWE-89")
+        self.assertEqual(derive_cwe({"cwe": ["89: SQL Injection"]}, "x"), "CWE-89")
+
+    def test_rule_id_keyword_when_no_metadata(self):
+        self.assertEqual(derive_cwe({}, "js.security.path-traversal.path-join"), "CWE-22")
+        self.assertEqual(derive_cwe({}, "x.jsonwebtoken.security.hardcoded-jwt-secret"), "CWE-798")
+        self.assertEqual(derive_cwe({}, "x.express.security.express-check-csurf"), "CWE-352")
+
+    def test_owasp_fallback(self):
+        self.assertEqual(derive_cwe({"owasp": "A03:2021 - Injection"}, "rule"), "CWE-74")
+        self.assertEqual(
+            derive_cwe({"owasp": ["A07:2017 - Cross-Site Scripting (XSS)"]}, "r"), "CWE-79")
+        self.assertEqual(derive_cwe({"owasp": "A10:2021 - Server-Side Request Forgery (SSRF)"}, "r"),
+                         "CWE-918")
+
+    def test_non_security_category_maps_to_coding_standards(self):
+        self.assertEqual(derive_cwe({"category": "correctness"}, "useless-assignment"), "CWE-710")
+        self.assertEqual(
+            derive_cwe({"category": "best-practice"}, "dockerfile-source-not-pinned"), "CWE-710")
+
+    def test_security_category_without_signal_stays_unknown(self):
+        # We must NOT fabricate a CWE for an unclassifiable security rule.
+        self.assertEqual(derive_cwe({"category": "security"}, "some-obscure-rule"), "")
+
+    def test_rule_id_keyword_does_not_misfire(self):
+        # 'source' contains the substring 'rce' — a naive map would mislabel this
+        # best-practice rule as CWE-78 (OS command injection). It must not.
+        self.assertNotEqual(
+            derive_cwe({"category": "best-practice"}, "dockerfile-source-not-pinned"), "CWE-78")
+        self.assertEqual(
+            derive_cwe({"category": "best-practice"}, "dockerfile-source-not-pinned"), "CWE-710")
+
+    def test_precedence_explicit_beats_keyword(self):
+        # An explicit (even unusual) CWE wins over a keyword guess from the id.
+        self.assertEqual(derive_cwe({"cwe": "CWE-1234"}, "x.sqli.tainted-sql"), "CWE-1234")
+
+
+class ExtractTaintTraceTests(SimpleTestCase):
+    """Taint trace must parse BOTH engine shapes and never raise (an unparsed
+    node must not sink the scan — the real OpenGrep crash this guards)."""
+
+    def test_semgrep_list_of_dicts_shape(self):
+        extra = {"dataflow_trace": {
+            "taint_source": [{"start": {"line": 5}, "code": "req.q"}],
+            "intermediate_vars": [],
+            "taint_sink": [{"start": {"line": 9}, "content": "exec(x)"}],
+        }}
+        self.assertEqual(_extract_taint_trace(extra), [(5, "req.q"), (9, "exec(x)")])
+
+    def test_opengrep_cliloc_tagged_tuple_shape(self):
+        # OpenGrep: ["CliLoc", [{start:{line}}, "code"]] — item[0] is a STRING tag,
+        # not a dict. The old parser did item.get(...) on "CliLoc" -> AttributeError.
+        extra = {"dataflow_trace": {
+            "taint_source": ["CliLoc",
+                             [{"start": {"line": 30}, "end": {"line": 33}}, "jwt.sign(x, 'secret')"]],
+            "intermediate_vars": [],
+            "taint_sink": ["CliLoc", [{"start": {"line": 30}}, "jwt.sign(x, 'secret')"]],
+        }}
+        out = _extract_taint_trace(extra)
+        self.assertIn((30, "jwt.sign(x, 'secret')"), out)
+
+    def test_garbage_shapes_never_raise(self):
+        self.assertEqual(_extract_taint_trace({"dataflow_trace": "nope"}), [])
+        self.assertEqual(_extract_taint_trace({}), [])
+        self.assertEqual(
+            _extract_taint_trace({"dataflow_trace": {"taint_source": ["weird", 123, None]}}), [])

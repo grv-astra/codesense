@@ -203,6 +203,14 @@ class VLLMClient:
         prompt, _ = self.truncate_prompt(prompt)
         safe_max   = self._safe_max_tokens(prompt)
 
+        # A caller may request more output than the default cap (e.g. the report
+        # enrichment pass needs room for several fields). Honour it, still bounded
+        # by the remaining context window. Absent -> unchanged default behaviour.
+        override = payload.get("max_tokens")
+        if isinstance(override, int) and override > 0:
+            available = self.max_model_len - self._estimate_tokens(prompt) - self._overhead
+            safe_max = max(32, min(override, available))
+
         for attempt in range(self.retry_attempts):
             try:
                 body = {

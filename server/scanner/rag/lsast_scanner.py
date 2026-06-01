@@ -14,6 +14,7 @@ from scanner.rag.finding_normalizer import normalize
 from scanner.rag.fusion import fuse
 from scanner.rag.languages import language_for_path
 from scanner.rag.llm_verifier import verify
+from scanner.rag.report_enricher import apply_report, generate_report
 from scanner.rag.semgrep_detector import run_semgrep
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,22 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str
         if outcome.action == "suppress":
             filtered.append(outcome.finding)
         else:
+            # Reporting pass: a second, separate LLM call authors the human-facing
+            # fields (name / description / impact / remediation). Fail-open — it
+            # leaves the deterministic Semgrep-derived fields (rule-name title,
+            # message) untouched if the model can't produce a usable report, and
+            # never touches CWE / severity / location.
+            report = generate_report(
+                rule_name=outcome.finding.get("title", ""),   # the Semgrep rule name (pre-enrichment)
+                cwe=outcome.finding.get("cwe", ""),
+                language=language_for_path(sf.file_path).name,
+                file_path=sf.file_path,
+                line=sf.start_line,
+                dataflow=dataflow,
+                code_excerpt=sf.code_excerpt,
+                detector_note=sf.message,                     # anchor the LLM to the real issue
+            )
+            apply_report(outcome.finding, report)
             visible.append(outcome.finding)
 
     if visible:

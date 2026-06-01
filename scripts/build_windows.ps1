@@ -152,17 +152,18 @@ if (-not $SkipTools) {
   # OpenGrep (OSS Semgrep fork) — a single-file native binary, staged as
   # semgrep.exe (the launcher sets SEMGREP_BIN to <tools>\semgrep). Pinned to
   # match the macOS build (scripts/offline_sbom/fetch_offline_tools.sh) so both
-  # platforms ship the same detector. Best-effort: a 404 is a warning (verify
-  # the asset name on the build host), not a build abort — but without it the
-  # packaged scan has no SAST detector.
-  $OpengrepVersion = "1.4.0"
-  $ogUrl = "https://github.com/opengrep/opengrep/releases/download/v$OpengrepVersion/opengrep_windows_x86_64.exe"
-  try {
-    Invoke-WebRequest -Uri $ogUrl -OutFile (Join-Path $ResTools "semgrep.exe") -UseBasicParsing
-    Ok "opengrep $OpengrepVersion staged as resources\tools\semgrep.exe"
-  } catch {
-    Write-Warning "OpenGrep fetch failed ($ogUrl): $($_.Exception.Message). Verify the asset at https://github.com/opengrep/opengrep/releases; the packaged scan has no SAST detector until semgrep.exe is staged."
+  # platforms ship the same detector. The real Windows asset is
+  # opengrep_windows_x86.exe (NOT _x86_64); a failed fetch is FATAL because an
+  # app with no SAST engine detects nothing.
+  $OpengrepVersion = "1.22.0"
+  $ogUrl = "https://github.com/opengrep/opengrep/releases/download/v$OpengrepVersion/opengrep_windows_x86.exe"
+  $ogOut = Join-Path $ResTools "semgrep.exe"
+  Invoke-WebRequest -Uri $ogUrl -OutFile $ogOut -UseBasicParsing
+  $ogSize = (Get-Item $ogOut).Length
+  if ($ogSize -lt 1000000) {
+    throw "Staged OpenGrep is only $ogSize bytes (<1MB) — fetch failed or wrong asset ($ogUrl). Verify at https://github.com/opengrep/opengrep/releases"
   }
+  Ok "opengrep $OpengrepVersion staged as resources\tools\semgrep.exe ($ogSize bytes)"
 
   Remove-Item $tmp -Recurse -Force
   Ok "syft/grype/grant/cosign/semgrep staged in resources\tools"

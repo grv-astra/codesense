@@ -3,7 +3,7 @@ from unittest import mock
 from django.test import SimpleTestCase
 
 from scanner.rag.lsast_scanner import lsast_scan_folder
-from scanner.rag.lsast_types import SemgrepFinding, VerifierVerdict
+from scanner.rag.lsast_types import FindingReport, SemgrepFinding, VerifierVerdict
 
 
 def _sqli_finding() -> SemgrepFinding:
@@ -31,6 +31,12 @@ def _safe_orm_finding() -> SemgrepFinding:
 
 
 class LsastScanFolderTests(SimpleTestCase):
+    def setUp(self):
+        # Keep the report-enrichment LLM pass out of these pipeline tests by
+        # default (hermetic); a dedicated test below exercises the wiring.
+        p = mock.patch("scanner.rag.lsast_scanner.generate_report", return_value=None)
+        p.start(); self.addCleanup(p.stop)
+
     @mock.patch("scanner.rag.lsast_scanner.save_findings_to_db")
     @mock.patch("scanner.rag.lsast_scanner.verify")
     @mock.patch("scanner.rag.lsast_scanner.run_semgrep")
@@ -98,8 +104,29 @@ class LsastScanFolderTests(SimpleTestCase):
         self.assertEqual(len(filtered), 0)
         mock_save.assert_called_once()
 
+    @mock.patch("scanner.rag.lsast_scanner.save_findings_to_db")
+    @mock.patch("scanner.rag.lsast_scanner.verify", return_value=VerifierVerdict("TP", "x", 0.9))
+    @mock.patch("scanner.rag.lsast_scanner.run_semgrep")
+    @mock.patch("scanner.rag.lsast_scanner.generate_report",
+                return_value=FindingReport("SQLi in transfer", "user input concatenated",
+                                           "attacker reads the DB", "use parameterized queries"))
+    def test_visible_finding_enriched_with_llm_report(self, _gen, mock_run, _verify, _save):
+        mock_run.return_value = [_sqli_finding()]
+        visible, _ = lsast_scan_folder("/tmp/code", "s1", "u1")
+        f = visible[0]
+        self.assertEqual(f["title"], "SQLi in transfer")              # LLM name
+        self.assertEqual(f["description"], "user input concatenated")  # LLM description
+        self.assertEqual(f["security_risk"], "attacker reads the DB")  # LLM impact
+        self.assertEqual(f["mitigation"], "use parameterized queries") # LLM remediation
+        self.assertEqual(f["cwe"], "CWE-89")                           # deterministic, untouched
+        self.assertEqual(f["severity"], "high")                        # deterministic, untouched
+
 
 class LanguageRoutingTests(SimpleTestCase):
+    def setUp(self):
+        p = mock.patch("scanner.rag.lsast_scanner.generate_report", return_value=None)
+        p.start(); self.addCleanup(p.stop)
+
     @mock.patch("scanner.rag.lsast_scanner.save_findings_to_db")
     @mock.patch("scanner.rag.lsast_scanner.verify")
     @mock.patch("scanner.rag.lsast_scanner.run_semgrep")

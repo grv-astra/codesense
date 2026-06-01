@@ -42,29 +42,38 @@ echo "Fetching Grant $GRANT_VERSION ..."; fetch_anchore grant "$GRANT_VERSION"
 echo "Fetching Cosign $COSIGN_VERSION ..."
 dl "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-${TARGET_OS}-${TARGET_ARCH}${ext}" "$OUT/cosign${ext}"
 
-# ------------- Semgrep / OpenGrep (SAST detector) -------------
-# OpenGrep is the OSS fork of Semgrep; it ships single-file native binaries
-# (Semgrep itself is a Python package, awkward to bundle). Same rule language.
-# NOTE: the release asset naming below is BEST-EFFORT and MUST be verified
-# against https://github.com/opengrep/opengrep/releases on the build host —
-# adjust ${OG_NAME} if the fetch 404s.
-OPENGREP_VERSION="${OPENGREP_VERSION:-1.4.0}"
-case "$TARGET_OS" in
-  darwin)  OG_OS="osx" ;;
-  linux)   OG_OS="manylinux" ;;
-  windows) OG_OS="windows" ;;
+# ------------- OpenGrep (SAST detector) -------------
+# OpenGrep is the maintained OSS fork of Semgrep; it ships single-file native
+# binaries (Semgrep itself is a Python package, awkward to bundle) with the same
+# rule language. We stage it as `semgrep`/`semgrep.exe` so the launcher's
+# SEMGREP_BIN points at it. Asset names are the real ones published at
+# https://github.com/opengrep/opengrep/releases (verified for v1.22.0): the
+# self-contained CLI is opengrep_<os>_<arch> (NOT the opengrep-core_* tarballs),
+# and the arch token differs by OS (osx uses arm64/x86, manylinux uses
+# aarch64/x86, windows is x86.exe).
+OPENGREP_VERSION="${OPENGREP_VERSION:-1.22.0}"
+case "$TARGET_OS/$TARGET_ARCH" in
+  darwin/arm64)  OG_ASSET="opengrep_osx_arm64" ;;
+  darwin/amd64)  OG_ASSET="opengrep_osx_x86" ;;
+  linux/arm64)   OG_ASSET="opengrep_manylinux_aarch64" ;;
+  linux/amd64)   OG_ASSET="opengrep_manylinux_x86" ;;
+  windows/amd64) OG_ASSET="opengrep_windows_x86.exe" ;;
+  *) echo "ERROR: no OpenGrep release asset for $TARGET_OS/$TARGET_ARCH" >&2; exit 1 ;;
 esac
-case "$TARGET_ARCH" in
-  arm64) OG_ARCH="aarch64" ;;
-  amd64) OG_ARCH="x86_64" ;;
-esac
-echo "Fetching OpenGrep $OPENGREP_VERSION ($OG_OS/$OG_ARCH) ..."
-OG_NAME="opengrep_${OG_OS}_${OG_ARCH}"
-# Wrapped in a subshell so a 404 prints a warning instead of aborting under set -e.
-( dl "https://github.com/opengrep/opengrep/releases/download/v${OPENGREP_VERSION}/${OG_NAME}${ext}" \
-     "$OUT/semgrep${ext}" ) \
-  || echo "  WARNING: OpenGrep fetch failed — verify the asset name on the build host."
-echo "  staged: $OUT/semgrep${ext}"
+echo "Fetching OpenGrep $OPENGREP_VERSION ($OG_ASSET) ..."
+# dl uses `curl -f`, so a 404 aborts the build (NOT swallowed) — shipping an app
+# with no SAST engine is exactly the failure this fatal path prevents.
+dl "https://github.com/opengrep/opengrep/releases/download/v${OPENGREP_VERSION}/${OG_ASSET}" \
+   "$OUT/semgrep${ext}"
+# Sanity-check the size: the real CLI is ~40MB; anything under 1MB means a
+# partial/empty/HTML-error download slipped through.
+sz=$(wc -c < "$OUT/semgrep${ext}" 2>/dev/null || echo 0)
+if [ "$sz" -lt 1000000 ]; then
+  echo "ERROR: staged OpenGrep is only ${sz}B (<1MB) — fetch failed or wrong asset." >&2
+  echo "       Verify the asset name at https://github.com/opengrep/opengrep/releases" >&2
+  exit 1
+fi
+echo "  staged: $OUT/semgrep${ext} (${sz} bytes)"
 
 chmod +x "$OUT"/* 2>/dev/null || true
 echo "Tools in: $OUT"

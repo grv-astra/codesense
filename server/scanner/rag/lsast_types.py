@@ -74,3 +74,41 @@ class VerifierVerdict:
         conf = max(0.0, min(1.0, conf))
         reason = str(obj.get("reason", ""))[:200]
         return cls(verdict=verdict, reason=reason, confidence=conf)
+
+
+@dataclass
+class FindingReport:
+    """LLM-authored, human-facing finding report (the 'reporting' pass).
+
+    Any field may be "" — the caller then keeps the deterministic, Semgrep-derived
+    value, so a weak/garbled model degrades gracefully instead of blanking a field.
+    """
+    name: str
+    description: str
+    impact: str
+    remediation: str
+
+    @classmethod
+    def from_json(cls, raw: str) -> "FindingReport | None":
+        """Lenient parse: None only if the payload isn't a JSON object. Tolerates
+        alternate key names the model may emit (title/risk/mitigation/fix)."""
+        try:
+            obj = json.loads(raw)
+        except (ValueError, TypeError):
+            return None
+        if not isinstance(obj, dict):
+            return None
+
+        def pick(*keys: str, limit: int) -> str:
+            for k in keys:
+                v = obj.get(k)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()[:limit]
+            return ""
+
+        return cls(
+            name=pick("name", "title", limit=120),
+            description=pick("description", "desc", "summary", limit=1000),
+            impact=pick("impact", "security_risk", "risk", limit=1000),
+            remediation=pick("remediation", "mitigation", "fix", "recommendation", limit=1000),
+        )

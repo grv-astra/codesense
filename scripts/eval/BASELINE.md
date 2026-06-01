@@ -69,4 +69,50 @@ SEMGREP_RULES_DIR=/path/to/semgrep-rules-python-and-javascript \
   Windows semgrep binary also added).
 - Grow the curated set across more of the top-40 languages.
 - Run the OWASP Benchmark detector tier for a real headline F1/recall.
-- Run the sampled verifier tier against llama-server to measure FP suppression.
+- ~~Run the sampled verifier tier against llama-server to measure FP suppression.~~
+  **DONE — see "Verifier (Tier 2) audit" below.**
+
+## Verifier (Tier 2) audit — 2026-05-31 (manual, live llama-server)
+
+Ran the verifier live (`scanner.rag.llm_verifier.verify`) over all 32 Semgrep
+findings from the Damn-Vulnerable-Bank backend, plus a controlled safe/unsafe
+A/B. **Result: the verifier currently provides ZERO FP-suppression value.**
+
+| Probe | Verdict | Correct? |
+|---|---|---|
+| 32 DVB findings (real vulns + lint-y) | **TP × 32** (conf 0.8–0.9, 0 fail-open) | n/a — keeps everything |
+| A/B: SQLi via string concat (unsafe) | TP | ✓ |
+| A/B: SQLi parameterized `%s,[q]` (safe) | **TP** — reason literally said *"parameterized queries, which prevents SQL injection"* | ✗ |
+
+**Root cause — model capability, not a code bug.** The bundled model (`astra.gguf`,
+alias `astra-code-reviewer`) is a **fill-in-the-middle code-completion model**, not
+an instruction-tuned classifier (see the header comments in `scanner/rag/llm.py`).
+Empirically it has a near-total **`TP`-label bias**: it emits `"verdict":"TP"` for
+everything — *even code whose own `reason` it describes as safe*. It is **not**
+failing open (it reaches the server and returns parseable JSON with conf 0.8–0.9);
+it simply never says `FP`. Since `fusion.fuse` only suppresses on `FP`+low/medium
+severity, nothing is ever suppressed → every finding stays `open`. That is the
+entire explanation for "kept all 50 open" — rubber-stamping, not adjudication.
+
+**Prompt fixes don't help (tested).** A safe-default reframing and a one-shot
+FP/TP example both *degraded* output: the FIM model echoed the (longer) prompt
+back verbatim → unparseable → fail-open `TP`. The current terse JSON prompt is the
+only one that reliably parses, and it still returns all-`TP`. So this cannot be
+fixed by prompting.
+
+**Why no quick code patch was applied.** The model's prose `reason` is sometimes
+correct, so a "parse the reason and flip TP→FP" override was considered and
+**rejected**: it is fragile (the model also hallucinates — in prompt B it called
+the parameterized query "without proper sanitization"), and in a security tool a
+wrong *suppression* (missed vulnerability) is worse than a kept false positive.
+The current fail-safe (show everything) is the correct default while the model is
+non-discriminative.
+
+**Recommended fix (follow-on initiative, needs a product decision).** Replace the
+verifier model with a small **instruction-tuned** model that can follow the JSON
+verdict contract and actually emit `FP` (e.g. Qwen2.5-Coder-Instruct-3B/7B,
+Llama-3.2-3B-Instruct), re-bundle the GGUF, and re-measure with this same Tier-2
+probe. Optionally pair with guided/GBNF decoding to lock the `verdict` field to
+`{TP,FP}`. Secondary: `fusion` sets `confidence`/`verifier_reason` but
+`FindingModel.insert_many` drops them (not model fields) — persist them (small
+migration) so verdict metadata survives once the model is trustworthy.

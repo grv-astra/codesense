@@ -73,7 +73,11 @@ class NormalizeTests(SimpleTestCase):
         self.assertIn("[12,18]", finding_dict["file_path"])
         self.assertEqual(finding_dict["created_by"], "user-123")
         self.assertEqual(finding_dict["lines"], [12, 18])
-        self.assertEqual(finding_dict["title"], "Possible SQL injection")
+        # title is the Semgrep rule NAME (last segment of the check_id), not the prose message
+        self.assertEqual(finding_dict["title"], "tainted-sql-string")
+        # the prose message is preserved as the description / security_risk
+        self.assertEqual(finding_dict["description"], "Possible SQL injection")
+        self.assertEqual(finding_dict["security_risk"], "Possible SQL injection")
         self.assertTrue(finding_dict["code"].startswith("f-"))
         self.assertEqual(finding_dict["reference"],
                          "https://cwe.mitre.org/data/definitions/89.html")
@@ -85,3 +89,22 @@ class NormalizeTests(SimpleTestCase):
         finding_dict, _ = normalize(f, scan_id="s", triggered_by="u")
         self.assertEqual(finding_dict["cwe"], "CWE-Unknown")
         self.assertEqual(finding_dict["reference"], "NA")
+
+    def test_title_uses_rule_name_last_segment(self):
+        # Semgrep namespaces a rule by its path and often duplicates the final
+        # segment; the displayed NAME is that last segment of the check_id.
+        f = _sample_finding()
+        f.rule_id = ("javascript.lang.security.audit.sqli."
+                     "node-mysql-sqli.node-mysql-sqli")
+        f.message = "Avoiding SQL string concatenation: untrusted input ..."
+        finding_dict, _ = normalize(f, scan_id="s", triggered_by="u")
+        self.assertEqual(finding_dict["title"], "node-mysql-sqli")
+        self.assertIn("Avoiding SQL", finding_dict["description"])
+
+    def test_title_falls_back_to_message_then_default(self):
+        f = _sample_finding()
+        f.rule_id = ""
+        f.message = "Some issue"
+        self.assertEqual(normalize(f, "s", "u")[0]["title"], "Some issue")
+        f.message = ""
+        self.assertEqual(normalize(f, "s", "u")[0]["title"], "Vulnerability")

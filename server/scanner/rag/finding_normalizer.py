@@ -46,6 +46,20 @@ def _cwe_number(cwe: str) -> str:
     return m.group(1) if m else ""
 
 
+def _rule_name(rule_id: str) -> str:
+    """The finding's NAME, taken from Semgrep's rule id (check_id).
+
+    Semgrep namespaces a rule by its path, so the last dotted segment is the
+    rule's own name, e.g.
+      javascript.lang.security.audit.sqli.node-mysql-sqli.node-mysql-sqli
+        -> "node-mysql-sqli"
+      generic.dockerfile.security.missing-user.missing-user -> "missing-user"
+    Returns "" when there's no rule id.
+    """
+    segs = [s for s in (rule_id or "").split(".") if s]
+    return segs[-1] if segs else ""
+
+
 def normalize(f: SemgrepFinding, scan_id: str, triggered_by: str) -> tuple[dict, DataflowContext]:
     """Return (legacy_finding_dict, dataflow_context). The dict matches extract.py's shape."""
     cvss_score, cvss_vector = _CVSS_BY_SEVERITY.get(
@@ -59,7 +73,8 @@ def normalize(f: SemgrepFinding, scan_id: str, triggered_by: str) -> tuple[dict,
         "cvss_vector": cvss_vector,
         "cvss_score": cvss_score,
         "code": "f-" + uuid.uuid4().hex[:8],
-        "title": (f.message or f.rule_id or "Vulnerability")[:200],
+        # Name comes from Semgrep's rule (check_id), not the prose message.
+        "title": (_rule_name(f.rule_id) or f.message or "Vulnerability")[:200],
         "description": f.message[:1000] if f.message else "",
         "severity": f.severity,
         "file_path": f"{f.file_path} [{f.start_line},{f.end_line}]",
