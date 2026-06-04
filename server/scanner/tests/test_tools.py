@@ -34,11 +34,15 @@ class ToolPathTests(SimpleTestCase):
         self.assertNotIn("GRYPE_DB_AUTO_UPDATE", env)
 
     def test_cosign_paths_use_key_dir_override(self):
-        os.environ["COSIGN_KEY_DIR"] = "/data/keys"
+        # Use a platform-rooted key dir so the expectation holds on POSIX and
+        # Windows alike (production resolves the path with pathlib).
+        key_dir = os.path.join(os.sep, "data", "keys")
+        os.environ["COSIGN_KEY_DIR"] = key_dir
         priv, pub, cfg = tools.cosign_paths()
-        self.assertEqual(priv, "/data/keys/cosign.key")
-        self.assertEqual(pub, "/data/keys/cosign.pub")
-        self.assertEqual(cfg, "/data/keys/signing-config.json")
+        base = Path(key_dir)
+        self.assertEqual(priv, str((base / "cosign.key").resolve()))
+        self.assertEqual(pub, str((base / "cosign.pub").resolve()))
+        self.assertEqual(cfg, str((base / "signing-config.json").resolve()))
 
 
 class SemgrepResolverTests(SimpleTestCase):
@@ -48,12 +52,14 @@ class SemgrepResolverTests(SimpleTestCase):
 
     def test_semgrep_bin_falls_back_to_tools_dir(self):
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "semgrep").write_text("#!/bin/sh\n")
-            os.chmod(Path(d) / "semgrep", 0o755)
+            # tool_path() looks for "<name>.exe" on Windows, bare name elsewhere.
+            exe = "semgrep" + (".exe" if os.name == "nt" else "")
+            (Path(d) / exe).write_text("#!/bin/sh\n")
+            os.chmod(Path(d) / exe, 0o755)
             with mock.patch.dict(os.environ,
                                  {"SCANNER_TOOLS_DIR": d, "SEMGREP_BIN": ""},
                                  clear=False):
-                self.assertEqual(get_semgrep_bin(), str(Path(d) / "semgrep"))
+                self.assertEqual(get_semgrep_bin(), str(Path(d) / exe))
 
     def test_semgrep_bin_falls_back_to_path_name(self):
         with mock.patch.dict(os.environ,
