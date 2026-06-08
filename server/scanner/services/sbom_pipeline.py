@@ -13,9 +13,15 @@ from scanner.services.tools import tool_path, grype_offline_env, cosign_paths
 # SBOM SIGNING
 # ============================================================
 def _sign_sbom(sbom_path: Path, bundle_path: Path):
-    private_key, _public_key, signing_config = cosign_paths()
+    private_key, _public_key, _signing_config = cosign_paths()
     env = dict(os.environ)
 
+    # Offline key-based signing with the bundled cosign (v2.4.x): never contact a
+    # transparency log (no network at runtime) and never prompt. `--yes` skips the
+    # confirmation prompt (otherwise the call blocks forever as a server sidecar),
+    # and `--tlog-upload=false` keeps signing fully offline. NB: the experimental
+    # `--signing-config` flag does NOT exist in cosign 2.4.x (the pinned/bundled
+    # version), so it must not be passed here.
     result = subprocess.run(
         [
             tool_path("cosign"),
@@ -23,10 +29,10 @@ def _sign_sbom(sbom_path: Path, bundle_path: Path):
             str(sbom_path),
             "--key",
             private_key,
-            "--signing-config",
-            signing_config,
             "--bundle",
             str(bundle_path),
+            "--yes",
+            "--tlog-upload=false",
         ],
         capture_output=True,
         text=True,

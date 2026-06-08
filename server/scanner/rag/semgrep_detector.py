@@ -213,6 +213,10 @@ def parse_semgrep_json(raw: str) -> list[SemgrepFinding]:
             metadata = {}
         severity_raw = (extra.get("severity") or "").upper()
         check_id = str(r.get("check_id", ""))
+        refs = metadata.get("references")
+        references = [str(u) for u in refs if isinstance(u, str)] if isinstance(refs, list) else []
+        fix_raw = extra.get("fix")
+        fix = str(fix_raw) if isinstance(fix_raw, str) else ""
         try:
             findings.append(SemgrepFinding(
                 rule_id=check_id,
@@ -225,6 +229,8 @@ def parse_semgrep_json(raw: str) -> list[SemgrepFinding]:
                 code_excerpt=str(extra.get("lines", "")),
                 taint_trace=_extract_taint_trace(extra),
                 sanitizers_observed=[],
+                references=references,
+                fix=fix,
             ))
         except (TypeError, ValueError) as exc:
             logger.warning("Skipping malformed Semgrep result: %s", exc)

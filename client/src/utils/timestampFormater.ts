@@ -10,26 +10,35 @@ export function formatTimestamp(
   options: Intl.DateTimeFormatOptions = {}
 ): string {
   if (!isoTimestamp || typeof isoTimestamp !== 'string') return '';
- 
-  // Remove last 3 digits from microseconds to fit JS Date format (milliseconds)
-  const cleaned = isoTimestamp.slice(0, -3); // e.g., "2025-07-27T14:51:36.689"
-  const date = new Date(cleaned);
- 
+
+  // The backend emits ISO 8601 with microseconds AND a timezone offset, e.g.
+  // "2026-06-04T11:48:55.332702+00:00". Trim sub-millisecond digits (JS Date
+  // only handles milliseconds) WITHOUT touching the trailing offset, so the
+  // value still parses. A bare timestamp with no offset is parsed as-is.
+  const normalized = isoTimestamp.replace(/(\.\d{3})\d+/, '$1');
+  const date = new Date(normalized);
+
   if (isNaN(date.getTime())) return '';
- 
-  // Convert UTC to IST (+5:30 hours)
-  const istOffsetMs = 5.5 * 60 * 60 * 1000; // 5 hours 30 mins in ms
-  const istDate = new Date(date.getTime() + istOffsetMs);
- 
-  // Extract components
-  const day = istDate.getDate().toString().padStart(2, '0');
-  const month = istDate.toLocaleString("en-US", { month: "short", ...options });
-  const year = istDate.getFullYear();
- 
-  let hours = istDate.getHours();
-  const minutes = istDate.getMinutes().toString().padStart(2, '0');
-  const strHours = hours.toString().padStart(2, '0');
- 
-  return ` ${strHours}:${minutes} - ${month}. ${day}, ${year}`;
+
+  // Render in IST regardless of the host machine's timezone. Using Intl with an
+  // explicit timeZone avoids the previous double-offset bug (manually adding
+  // 5.5h and then reading local-time getters).
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    ...options,
+  })
+    .formatToParts(date)
+    .reduce<Record<string, string>>((acc, p) => {
+      acc[p.type] = p.value;
+      return acc;
+    }, {});
+
+  return ` ${parts.hour}:${parts.minute} - ${parts.month}. ${parts.day}, ${parts.year}`;
 }
  

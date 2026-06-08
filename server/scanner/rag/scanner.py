@@ -21,7 +21,8 @@ def scan_folder(folder_path, scan_id, triggered_by, scan_name):
     # ----------------------------------------------------------
     try:
         ast_metrics = analyze_folder(folder_path)
-        update_progress(scan_id=scan_id, metrics=ast_metrics)
+        total_files = ast_metrics.get("total_files", 0)
+        update_progress(scan_id=scan_id, metrics=ast_metrics, total=total_files)
         logger.info(
             "AST Completed → LOC: %s | Functions: %s | Languages: %s",
             ast_metrics.get("total_loc"),
@@ -45,6 +46,7 @@ def scan_folder(folder_path, scan_id, triggered_by, scan_name):
     update_progress(
         scan_id=scan_id,
         findings=len(visible),
+        scanned=total_files,   # no per-file progress; on completion all files are done
         status="completed",
         end_time=datetime.now(timezone.utc),
     )

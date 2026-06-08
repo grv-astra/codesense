@@ -60,6 +60,33 @@ def _rule_name(rule_id: str) -> str:
     return segs[-1] if segs else ""
 
 
+def _build_mitigation(f: SemgrepFinding, reference: str) -> str:
+    """Deterministic remediation guidance derived from the rule's own metadata.
+
+    Ensures a finding is never blank when LLM enrichment is unavailable (no model
+    staged / enrichment disabled). The report-enricher overrides this with
+    model-authored remediation whenever it succeeds (report_enricher.apply_report
+    only overwrites when its remediation field is non-empty).
+    """
+    parts: list[str] = []
+    if f.fix and f.fix.strip():
+        parts.append(f"Suggested fix: {f.fix.strip()}")
+    if f.references:
+        parts.append("References: " + "; ".join(f.references[:3]))
+    if not parts:
+        if reference and reference != "NA":
+            parts.append(
+                f"Review the flagged code against {f.cwe or 'the relevant CWE'} and "
+                f"apply the recommended secure-coding fix. See {reference}."
+            )
+        else:
+            parts.append(
+                "Review the flagged code and apply the recommended secure-coding "
+                "fix for this rule."
+            )
+    return " ".join(parts)[:1000]
+
+
 def normalize(f: SemgrepFinding, scan_id: str, triggered_by: str) -> tuple[dict, DataflowContext]:
     """Return (legacy_finding_dict, dataflow_context). The dict matches extract.py's shape."""
     cvss_score, cvss_vector = _CVSS_BY_SEVERITY.get(
@@ -80,7 +107,7 @@ def normalize(f: SemgrepFinding, scan_id: str, triggered_by: str) -> tuple[dict,
         "file_path": f"{f.file_path} [{f.start_line},{f.end_line}]",
         "code_snip": (f.code_excerpt or "")[:2000],
         "security_risk": f.message[:1000] if f.message else "",   # legacy schema: same text as description for now; verifier enriches later
-        "mitigation": "",
+        "mitigation": _build_mitigation(f, reference),
         "status": "open",
         "deleted": False,
         "approved": False,

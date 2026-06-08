@@ -42,7 +42,7 @@ const DashboardCards = ({ data }: { data: StatCountDetails | undefined }) => {
     {
       title: 'SBOM Scans',
       icon: ScanSearch,
-      count: data?.findings ?? 0,
+      count: data?.sbom_scans ?? 0,
       trend: '+1%',
       trendLabel: 'than last week',
       trendPositive: true,

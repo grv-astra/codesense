@@ -1,3 +1,6 @@
 *.key
 *.pub
 .worktrees/
+
+# Staged offline scanner tools / DBs / rules (dev-from-source; large, downloadable)
+dist/

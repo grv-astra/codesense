@@ -2,7 +2,9 @@ export interface StatCountDetails {
   users: number,
   projects: number,
   scans: number,
-  findings: number
+  findings: number,
+  sbom_scans: number,
+  sbom_findings: number
 }
 
 export type SeverityData = {

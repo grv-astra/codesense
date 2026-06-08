@@ -23,6 +23,8 @@ class SemgrepFinding:
     code_excerpt: str
     taint_trace: list[tuple[int, str]] = field(default_factory=list)  # (line, code) per step
     sanitizers_observed: list[str] = field(default_factory=list)      # rule-reported sanitizers
+    references: list[str] = field(default_factory=list)               # rule metadata.references URLs
+    fix: str = ""                                                     # rule autofix suggestion, if any
 
 
 @dataclass

@@ -7,7 +7,9 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from local.api_app.models.orm import Project, Scan, Finding
+from local.api_app.models.orm import (
+    Project, Scan, Finding, SbomScan, SbomFinding,
+)
 
 
 def _severity_defaults() -> dict:
@@ -24,6 +26,9 @@ class DashboardView(APIView):
                     "projects": Project.objects.filter(deleted=False).count(),
                     "scans": Scan.objects.filter(deleted=False).count(),
                     "findings": Finding.objects.filter(deleted=False).count(),
+                    "sbom_scans": SbomScan.objects.filter(deleted=False).count(),
+                    # NB: SbomFinding has no `deleted` field (no soft-delete), so count all rows.
+                    "sbom_findings": SbomFinding.objects.count(),
                 },
                 "system_status": self._get_system_status(),
                 "count_by_severity": self._get_severity_counts(),

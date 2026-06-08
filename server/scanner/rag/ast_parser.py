@@ -125,9 +125,11 @@ def analyze_folder(folder_path: str) -> Dict:
 
     total_loc = 0
     total_functions = 0
+    total_files = 0
     languages: Set[str] = set()
 
     for file_path in get_source_files(folder_path):
+        total_files += 1
         try:
             content = read_file(file_path)
             loc, funcs, lang = analyze_file_for_ast_metrics(file_path, content)
@@ -143,5 +145,6 @@ def analyze_folder(folder_path: str) -> Dict:
     return {
         "total_loc": total_loc,
         "total_functions": total_functions,
+        "total_files": total_files,
         "languages": sorted(languages)
     }
