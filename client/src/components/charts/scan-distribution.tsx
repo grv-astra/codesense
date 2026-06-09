@@ -36,7 +36,7 @@ function ScanDistribution({ data = [] }: { data?: ScanDistributionItem[] }) {
           Scan Distribution
         </div>
         <div className="text-xs mt-0.5 text-gray-400 dark:text-gray-500 transition-colors duration-300">
-          ZIP uploads vs GitHub scans
+          Code scans vs SBOM scans
         </div>
       </div>
 

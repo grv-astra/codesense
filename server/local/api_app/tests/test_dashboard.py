@@ -44,9 +44,10 @@ class DashboardAggregationTests(TestCase):
         self.assertEqual(rows[0]["critical"], 1)
 
     def test_scan_distribution(self):
-        rows = self.view._get_scan_distribution()
-        self.assertEqual(rows[0]["name"], "ZIP Upload")
-        self.assertEqual(rows[0]["value"], 1)
+        rows = {r["name"]: r["value"] for r in self.view._get_scan_distribution()}
+        # distribution is now Code (SAST) vs SBOM (SCA), not zip vs github
+        self.assertEqual(rows["Code Scans"], 1)
+        self.assertEqual(rows["SBOM Scans"], 0)
 
     def test_findings_trend_has_seven_days(self):
         self.assertEqual(len(self.view._get_findings_trend()), 7)

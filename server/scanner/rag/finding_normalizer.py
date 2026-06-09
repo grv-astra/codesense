@@ -60,6 +60,24 @@ def _rule_name(rule_id: str) -> str:
     return segs[-1] if segs else ""
 
 
+_SEVERITY_IMPACT = {
+    "critical": "could allow full compromise of the application or host if exploited",
+    "high": "could lead to a serious breach of confidentiality, integrity, or availability",
+    "medium": "could be leveraged as part of an attack chain to weaken the application's security",
+    "low": "poses a limited but real security risk that should be reviewed",
+}
+
+
+def _build_security_risk(f: SemgrepFinding) -> str:
+    """Deterministic impact statement, distinct from the description (which holds
+    the analyzer's message). LLM enrichment overrides this with model-authored
+    impact when it succeeds (report_enricher.apply_report)."""
+    sev = (f.severity or "medium").lower()
+    cwe = f.cwe or "an unspecified weakness"
+    impact = _SEVERITY_IMPACT.get(sev, _SEVERITY_IMPACT["medium"])
+    return f"This {sev}-severity {cwe} issue {impact}."
+
+
 def _build_mitigation(f: SemgrepFinding, reference: str) -> str:
     """Deterministic remediation guidance derived from the rule's own metadata.
 
@@ -106,7 +124,7 @@ def normalize(f: SemgrepFinding, scan_id: str, triggered_by: str) -> tuple[dict,
         "severity": f.severity,
         "file_path": f"{f.file_path} [{f.start_line},{f.end_line}]",
         "code_snip": (f.code_excerpt or "")[:2000],
-        "security_risk": f.message[:1000] if f.message else "",   # legacy schema: same text as description for now; verifier enriches later
+        "security_risk": _build_security_risk(f),   # deterministic impact (distinct from description); LLM enriches when available
         "mitigation": _build_mitigation(f, reference),
         "status": "open",
         "deleted": False,

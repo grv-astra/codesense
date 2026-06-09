@@ -75,9 +75,12 @@ class NormalizeTests(SimpleTestCase):
         self.assertEqual(finding_dict["lines"], [12, 18])
         # title is the Semgrep rule NAME (last segment of the check_id), not the prose message
         self.assertEqual(finding_dict["title"], "tainted-sql-string")
-        # the prose message is preserved as the description / security_risk
+        # the prose message is preserved as the description
         self.assertEqual(finding_dict["description"], "Possible SQL injection")
-        self.assertEqual(finding_dict["security_risk"], "Possible SQL injection")
+        # security_risk is a distinct deterministic impact statement (NOT the message)
+        self.assertNotEqual(finding_dict["security_risk"], finding_dict["description"])
+        self.assertIn("CWE-89", finding_dict["security_risk"])
+        self.assertIn("high-severity", finding_dict["security_risk"])
         self.assertTrue(finding_dict["code"].startswith("f-"))
         self.assertEqual(finding_dict["reference"],
                          "https://cwe.mitre.org/data/definitions/89.html")

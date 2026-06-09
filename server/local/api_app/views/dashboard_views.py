@@ -143,19 +143,19 @@ class DashboardView(APIView):
         return rows[:10]
 
     def _get_scan_distribution(self):
-        palette = {"zip": "#8b5cf6", "github": "#ec4899"}
-        labels = {"zip": "ZIP Upload", "github": "GitHub Repo"}
-        rows = (Scan.objects.filter(deleted=False).values("source")
-                .annotate(value=Count("id")).order_by("-value", "source"))
-        results = []
-        for r in rows:
-            source = str(r["source"] or "zip")
-            results.append({
-                "name": labels.get(source, source.title()),
-                "value": r["value"],
-                "color": palette.get(source, "#bf0000"),
-            })
-        return results
+        """Code (SAST) scans vs SBOM (SCA) scans."""
+        return [
+            {
+                "name": "Code Scans",
+                "value": Scan.objects.filter(deleted=False).count(),
+                "color": "#8b5cf6",
+            },
+            {
+                "name": "SBOM Scans",
+                "value": SbomScan.objects.filter(deleted=False).count(),
+                "color": "#ec4899",
+            },
+        ]
 
 
 def _user_count():
