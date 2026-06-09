@@ -23,12 +23,19 @@ function RouteComponent() {
   const navigate = useNavigate()
   const scansPerPage = 10;
   const [currentPage, setCurrentPage] = useState(1);
+  const [search, setSearch] = useState('');
   const { projectId } = useParams({ from: '/_authenticated/project/$projectId/codescan' });
+
+  const handleSearch = (q: string) => {
+    setSearch(q);
+    setCurrentPage(1);
+  };
 
   // For server-side pagination
   const { data: scanResponse, isLoading, error } = useScans(projectId, {
     page: currentPage,
     limit: scansPerPage,
+    search,
   });
   const deleteScanMutation = useDeleteScan()
 
@@ -168,6 +175,8 @@ function RouteComponent() {
       }
       enableColumnFilter={true}
       filterButtonVariant="outline"
+      onSearchChange={handleSearch}
+      searchPlaceholder="Search scans..."
     />
   );
 }

@@ -125,12 +125,13 @@ class UserModuleView(APIView):
     def get(self, request):
         page = int(request.query_params.get("page", 1))
         limit = int(request.query_params.get("limit", 10))
- 
+        search = request.query_params.get("search", "")
+
         user = request.user
         user_role = user.get("role", "").lower()
 
         if user_role == "manager":
-            all_users = UserModel.find_all(page=page, limit=limit, role="manager")
+            all_users = UserModel.find_all(page=page, limit=limit, role="manager", search=search)
         else:
-            all_users = UserModel.find_all(page=page, limit=limit, role="admin")
+            all_users = UserModel.find_all(page=page, limit=limit, role="admin", search=search)
         return Response(all_users, status=status.HTTP_200_OK)

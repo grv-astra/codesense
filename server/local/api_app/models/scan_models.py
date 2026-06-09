@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from django.db.models import Q
 from local.api_app.models.orm import Scan, Finding
 
 
@@ -59,9 +60,14 @@ class ScanModel:
         return cls.serialize(Scan.objects.filter(id=scan_id).first())
 
     @classmethod
-    def find_by_project(cls, project_id: str, page=1, limit=10):
+    def find_by_project(cls, project_id: str, page=1, limit=10, search=""):
         skip = (page - 1) * limit
         qs = Scan.objects.filter(project_id=project_id)
+        s = (search or "").strip()
+        if s:
+            qs = qs.filter(
+                Q(scan_name__icontains=s) | Q(status__icontains=s) | Q(source__icontains=s)
+            )
         total = qs.count()
         rows = list(qs.order_by("created_at")[skip:skip + limit])
         return {

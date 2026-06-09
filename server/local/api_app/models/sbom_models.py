@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from django.db.models import Q
 from local.api_app.models.orm import SbomScan, SbomFinding, SbomLicenseFinding
 
 _FINDING_FIELDS = ["scan_id", "package_name", "package_version", "package_type",
@@ -140,9 +141,12 @@ class SbomModel:
         return cls.serialize(SbomScan.objects.filter(id=scan_id).first())
 
     @classmethod
-    def find_by_project(cls, project_id: str, page=1, limit=10):
+    def find_by_project(cls, project_id: str, page=1, limit=10, search=""):
         skip = (page - 1) * limit
         qs = SbomScan.objects.filter(project_id=project_id)
+        s = (search or "").strip()
+        if s:
+            qs = qs.filter(Q(scan_name__icontains=s) | Q(status__icontains=s))
         total = qs.count()
         rows = list(qs[skip:skip + limit])
         return {
@@ -166,9 +170,16 @@ class SbomModel:
         return [cls.finding_serialize(f) for f in SbomFinding.objects.filter(scan_id=scan_id)]
 
     @classmethod
-    def find_by_sbom_scan(cls, scan_id: str, page=1, limit=10):
+    def find_by_sbom_scan(cls, scan_id: str, page=1, limit=10, search=""):
         skip = (page - 1) * limit
         qs = SbomFinding.objects.filter(scan_id=scan_id)
+        s = (search or "").strip()
+        if s:
+            qs = qs.filter(
+                Q(package_name__icontains=s) | Q(package_version__icontains=s)
+                | Q(package_type__icontains=s) | Q(cve_id__icontains=s)
+                | Q(severity__icontains=s) | Q(description__icontains=s)
+            )
         total = qs.count()
         rows = list(qs[skip:skip + limit])
         return {
@@ -183,9 +194,15 @@ class SbomModel:
                 for f in SbomLicenseFinding.objects.filter(scan_id=scan_id)]
 
     @classmethod
-    def find_license_findings_by_scan(cls, scan_id: str, page=1, limit=10):
+    def find_license_findings_by_scan(cls, scan_id: str, page=1, limit=10, search=""):
         skip = (page - 1) * limit
         qs = SbomLicenseFinding.objects.filter(scan_id=scan_id)
+        s = (search or "").strip()
+        if s:
+            qs = qs.filter(
+                Q(package_name__icontains=s) | Q(package_version__icontains=s)
+                | Q(package_type__icontains=s) | Q(decision__icontains=s)
+            )
         total = qs.count()
         rows = list(qs[skip:skip + limit])
         return {

@@ -152,7 +152,13 @@ function FindingDetailDialog({
 function FindingsComponent() {
   const findingsPerPage = 10;
   const [currentPage, setCurrentPage] = useState(1);
+  const [search, setSearch] = useState('');
   const [selectedFinding, setSelectedFinding] = useState<SbomFindings | null>(null);
+
+  const handleSearch = (q: string) => {
+    setSearch(q);
+    setCurrentPage(1);
+  };
 
   const { sbomscanId } = useParams({
     from: '/_authenticated/scan/sbom/$sbomscanId/findings',
@@ -163,6 +169,7 @@ function FindingsComponent() {
     {
       page: currentPage,
       limit: findingsPerPage,
+      search,
     }
   );
 
@@ -234,6 +241,8 @@ function FindingsComponent() {
         }
         enableColumnFilter={true}
         filterButtonVariant="outline"
+        onSearchChange={handleSearch}
+        searchPlaceholder="Search vulnerabilities..."
         onRowClick={(finding) => setSelectedFinding(finding)}
       />
     </>

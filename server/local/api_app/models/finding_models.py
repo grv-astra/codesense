@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from django.db.models import Q
 from local.api_app.models.orm import Finding, Scan
 
 _FIELDS = [
@@ -69,9 +70,18 @@ class FindingModel:
         return [cls.serialize(f) for f in Finding.objects.filter(scan_id=scan_id, deleted=False)]
 
     @classmethod
-    def find_by_scan(cls, scan_id: str, page=1, limit=10):
+    def find_by_scan(cls, scan_id: str, page=1, limit=10, search=""):
         skip = (page - 1) * limit
         qs = Finding.objects.filter(scan_id=scan_id, deleted=False)
+        s = (search or "").strip()
+        if s:
+            qs = qs.filter(
+                Q(title__icontains=s) | Q(description__icontains=s)
+                | Q(cwe__icontains=s) | Q(severity__icontains=s)
+                | Q(file_path__icontains=s) | Q(security_risk__icontains=s)
+                | Q(mitigation__icontains=s) | Q(status__icontains=s)
+                | Q(code__icontains=s)
+            )
         total = qs.count()
         rows = list(qs[skip:skip + limit])
         return {

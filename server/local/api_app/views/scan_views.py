@@ -162,13 +162,14 @@ class ScanListView(APIView):
         type = str(request.query_params.get("type", "sca"))
         page = int(request.query_params.get("page", 1))
         limit = int(request.query_params.get("limit", 10))
-    
+        search = request.query_params.get("search", "")
+
         scans = []
         match type:
             case "sca":
-                scans = ScanModel.find_by_project(project_id=project_id, page=page, limit=limit)
+                scans = ScanModel.find_by_project(project_id=project_id, page=page, limit=limit, search=search)
             case "sbom":
-                scans = SbomModel.find_by_project(project_id=project_id, page=page, limit=limit)
+                scans = SbomModel.find_by_project(project_id=project_id, page=page, limit=limit, search=search)
         
         if not scans:
             return JsonResponse({"error": "scan not found"}, status=status.HTTP_404_NOT_FOUND)

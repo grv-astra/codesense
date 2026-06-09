@@ -16,12 +16,19 @@ export const Route = createFileRoute('/_authenticated/users/list')({
 function RouteComponent() {
   const usersPerPage = 10;
   const [currentPage, setCurrentPage] = useState(1);
+  const [search, setSearch] = useState('');
   const navigate = useNavigate({ from: '/users/list' })
+
+  const handleSearch = (q: string) => {
+    setSearch(q);
+    setCurrentPage(1);
+  };
 
   // For server-side pagination
   const { data: usersResponse, isLoading, error } = useUsers({
     page: currentPage,
     limit: usersPerPage,
+    search,
   });
   const deleteUserMutation = useDeleteProfile()
 
@@ -126,9 +133,11 @@ function RouteComponent() {
       onPageChange={setCurrentPage}
       emptyMessage="No users found"
       onRowClick={handleRowClick}
-      rowClassName={() => 
+      rowClassName={() =>
         `hover:bg-gray-50 hover:dark:bg-gray-300/10`
       }
+      onSearchChange={handleSearch}
+      searchPlaceholder="Search users..."
     />
   );
 }

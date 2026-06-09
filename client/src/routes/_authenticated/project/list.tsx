@@ -17,11 +17,18 @@ function RouteComponent() {
   const navigate = useNavigate()
   const usersPerPage = 10;
   const [currentPage, setCurrentPage] = useState(1);
+  const [search, setSearch] = useState('');
+
+  const handleSearch = (q: string) => {
+    setSearch(q);
+    setCurrentPage(1);
+  };
 
   // For server-side pagination
   const { data: projectResponse, isLoading, error } = useProjects({
     page: currentPage,
     limit: usersPerPage,
+    search,
   });
   const deletedProjectMutation = useDeleteProject()
 
@@ -117,9 +124,11 @@ function RouteComponent() {
       onPageChange={setCurrentPage}
       emptyMessage="No projects found"
       onRowClick={handleRowClick}
-      rowClassName={() => 
+      rowClassName={() =>
         `hover:bg-gray-50 hover:dark:bg-gray-300/10`
       }
+      onSearchChange={handleSearch}
+      searchPlaceholder="Search projects..."
     />
   );
 }

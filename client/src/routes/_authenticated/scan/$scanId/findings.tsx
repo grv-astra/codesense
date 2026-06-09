@@ -15,12 +15,19 @@ function FindingsComponent() {
   const navigate = useNavigate();
   const findingsPerPage = 10;
   const [currentPage, setCurrentPage] = useState(1);
+  const [search, setSearch] = useState('');
   const { scanId } = useParams({ from: '/_authenticated/scan/$scanId/findings' });
+
+  const handleSearch = (q: string) => {
+    setSearch(q);
+    setCurrentPage(1);
+  };
 
   // Queries
   const { data: findingsResponse, isLoading, error } = useFindings(scanId, {
     page: currentPage,
     limit: findingsPerPage,
+    search,
   });
 
   const toggleFindingApproved = useToggleFindingApproved();
@@ -132,11 +139,13 @@ function FindingsComponent() {
       currentPage={currentPage}
       onPageChange={setCurrentPage}
       emptyMessage="No findings found"
-      rowClassName={() => 
+      rowClassName={() =>
         `hover:bg-gray-50 hover:dark:bg-gray-300/10`
       }
       enableColumnFilter={true}
       filterButtonVariant="outline"
+      onSearchChange={handleSearch}
+      searchPlaceholder="Search findings..."
     />
   );
 }

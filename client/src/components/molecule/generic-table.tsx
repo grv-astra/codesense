@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Card, CardContent, CardHeader } from '@/components/atomic/card';
 import { Button } from '@/components/atomic/button';
-import { ChevronLeft, ChevronRight, Filter } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Filter, Search, X } from 'lucide-react';
 import { DotsLoader } from '../atomic/loader';
 
 // Generic table column definition
@@ -42,6 +42,11 @@ export interface GenericTableProps<T> {
   enableColumnFilter?: boolean; // Enable column filtering feature
   filterButtonVariant?: 'default' | 'outline' | 'ghost';
   filterButtonClassName?: string;
+  searchable?: boolean;          // Show a search box that filters across the table's columns
+  searchPlaceholder?: string;
+  // When provided, search is SERVER-SIDE: the (debounced) query is handed back to
+  // the parent (which refetches) instead of filtering the loaded rows client-side.
+  onSearchChange?: (query: string) => void;
 }
 
 export function GenericTable<T extends Record<string, any>>({
@@ -63,8 +68,12 @@ export function GenericTable<T extends Record<string, any>>({
   enableColumnFilter = false,
   filterButtonVariant = 'outline',
   filterButtonClassName = '',
+  searchable = true,
+  searchPlaceholder = 'Search...',
+  onSearchChange,
 }: GenericTableProps<T>) {
   const [internalCurrentPage, setInternalCurrentPage] = useState(1);
+  const [query, setQuery] = useState('');
   const [showColumnSelector, setShowColumnSelector] = useState(false);
   const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>(
     () => {
@@ -79,9 +88,40 @@ export function GenericTable<T extends Record<string, any>>({
   // Use controlled or internal pagination
   const currentPage = controlledCurrentPage || internalCurrentPage;
   const isServerSidePagination = totalItems !== undefined && onPageChange !== undefined;
-  
-  // Calculate pagination values
-  const total = isServerSidePagination ? totalItems : data.length;
+
+  // --- Search ---
+  // Server mode (onSearchChange provided): hand the debounced query to the parent
+  // and render whatever it returns (no client filtering, pagination stays on).
+  // Client mode: filter the loaded rows across every column's underlying value.
+  const serverMode = typeof onSearchChange === 'function';
+  const rawCellValue = (item: T, column: TableColumn<T>): unknown => {
+    const keys = column.key.toString().split('.');
+    let value: any = item;
+    for (const key of keys) value = value?.[key];
+    return value;
+  };
+  const clientSearching = searchable && !serverMode && query.trim() !== '';
+  const q = query.trim().toLowerCase();
+  const baseData = clientSearching
+    ? data.filter(item =>
+        columns.some(col => {
+          const v = rawCellValue(item, col);
+          return v != null && String(v).toLowerCase().includes(q);
+        }))
+    : data;
+
+  // Server mode: emit ONLY on explicit submit (Search button / Enter), never
+  // while typing, so each keystroke doesn't trigger a backend fetch.
+  const submitServerSearch = () => {
+    if (serverMode) onSearchChange?.(query.trim());
+  };
+  const clearSearch = () => {
+    setQuery('');
+    if (serverMode) onSearchChange?.('');
+  };
+
+  // Calculate pagination values (client search shows all matches, bypassing paging)
+  const total = clientSearching ? baseData.length : (isServerSidePagination ? totalItems : data.length);
   const totalPages = Math.ceil(total / pagination.pageSize);
   
   // Get visible columns
@@ -97,6 +137,9 @@ export function GenericTable<T extends Record<string, any>>({
   
   // Get current page data (for client-side pagination)
   const getCurrentPageData = () => {
+    if (clientSearching) {
+      return baseData; // show all matches across the loaded rows
+    }
     if (!pagination.enabled || isServerSidePagination) {
       return data;
     }
@@ -213,13 +256,54 @@ export function GenericTable<T extends Record<string, any>>({
   return (
     <Card className={className}>
       <CardHeader>
-        <div className="flex justify-between items-center">
+        <div className="flex justify-between items-center gap-3 flex-wrap">
           {title && (
             <h2 className="text-3xl font-bold">
               {title}
             </h2>
           )}
-          
+
+          <div className="flex items-center gap-2 ml-auto">
+          {/* Search box */}
+          {searchable && (
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') submitServerSearch(); }}
+                  placeholder={searchPlaceholder}
+                  className="pl-8 pr-8 py-2 text-sm rounded-lg border w-56
+                    text-[#2d2d2d] dark:text-[#e5e5e5] bg-white dark:bg-[#2d2d2d]
+                    border-[#e5e5e5] dark:border-[#444]
+                    focus:outline-none focus:ring-2 focus:ring-[#bf0000]/40"
+                />
+                {query && (
+                  <button
+                    type="button"
+                    onClick={clearSearch}
+                    aria-label="Clear search"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+              {serverMode && (
+                <Button
+                  variant="outline"
+                  onClick={submitServerSearch}
+                  className="flex items-center gap-1.5"
+                >
+                  <Search className="w-4 h-4" />
+                  Search
+                </Button>
+              )}
+            </div>
+          )}
+
           {/* Column Filter Button */}
           {enableColumnFilter && (
             <div className="relative">
@@ -270,6 +354,7 @@ export function GenericTable<T extends Record<string, any>>({
               )}
             </div>
           )}
+          </div>
         </div>
       </CardHeader>
         
@@ -326,7 +411,7 @@ export function GenericTable<T extends Record<string, any>>({
         </div>
 
         {/* Pagination */}
-        {pagination.enabled && totalPages > 1 && (
+        {pagination.enabled && totalPages > 1 && !clientSearching && (
           <div className="flex justify-between items-center mt-6 flex-wrap gap-4">
             {pagination.showInfo && (
               <p className="text-sm text-gray-600 dark:text-[#e5e5e5]">

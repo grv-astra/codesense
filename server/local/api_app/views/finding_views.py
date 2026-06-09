@@ -18,7 +18,8 @@ class FindingListCreateView(APIView):
             page = int(request.query_params.get("page", 1))
             limit = int(request.query_params.get("limit", 10))
  
-            findings = FindingModel.find_by_scan(scan_id=scan_id, page=page, limit=limit)
+            search = request.query_params.get("search", "")
+            findings = FindingModel.find_by_scan(scan_id=scan_id, page=page, limit=limit, search=search)
             if not findings:
                 return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
             return Response(findings, status=status.HTTP_200_OK)
@@ -32,7 +33,8 @@ class SbomFindingListCreateView(APIView):
             page = int(request.query_params.get("page", 1))
             limit = int(request.query_params.get("limit", 10))
  
-            findings = SbomModel.find_by_sbom_scan(scan_id=scan_id, page=page, limit=limit)
+            search = request.query_params.get("search", "")
+            findings = SbomModel.find_by_sbom_scan(scan_id=scan_id, page=page, limit=limit, search=search)
             if not findings:
                 return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
     
@@ -47,7 +49,8 @@ class SbomLicenseFindingList(APIView):
             page = int(request.query_params.get("page", 1))
             limit = int(request.query_params.get("limit", 10))
  
-            findings = SbomModel.find_license_findings_by_scan(scan_id=scan_id, page=page, limit=limit)
+            search = request.query_params.get("search", "")
+            findings = SbomModel.find_license_findings_by_scan(scan_id=scan_id, page=page, limit=limit, search=search)
             if not findings:
                 return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
     

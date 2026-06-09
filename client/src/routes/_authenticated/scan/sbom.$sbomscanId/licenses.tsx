@@ -2,7 +2,7 @@ import { createFileRoute, useParams } from '@tanstack/react-router';
 import { GenericTable, type TableColumn } from '@/components/molecule/generic-table';
 import { Button } from '@/components/atomic/button';
 import { X } from 'lucide-react';
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { Card } from '@/components/atomic/card';
 import { useSbomLicenses } from '@/hooks/use-finding';
 import type { LicenseFinding } from '@/types/finding';
@@ -172,7 +172,12 @@ function RouteComponent() {
   const findingsPerPage = 10;
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedFinding, setSelectedFinding] = useState<LicenseFinding | null>(null);
-  const [searchTerm] = useState('');
+  const [search, setSearch] = useState('');
+
+  const handleSearch = (q: string) => {
+    setSearch(q);
+    setCurrentPage(1);
+  };
 
   const { sbomscanId } = useParams({
     from: '/_authenticated/scan/sbom/$sbomscanId/licenses',
@@ -181,24 +186,11 @@ function RouteComponent() {
   const { data: licenseResponse, isLoading, error } = useSbomLicenses(sbomscanId, {
     page: currentPage,
     limit: findingsPerPage,
+    search,
   });
 
   const findings: LicenseFinding[] = licenseResponse?.licenses || [];
   const totalFindings = licenseResponse?.pagination.total || 0;
-
-  const filteredFindings = useMemo(
-    () =>
-      findings.filter((f) =>
-        [
-          f.package.name,
-          f.package.type,
-          f.decision,
-          f.license.id,
-          f.license.risk_category,
-        ].some((v) => v?.toLowerCase().includes(searchTerm.toLowerCase())),
-      ),
-    [findings, searchTerm],
-  );
 
   const columns: TableColumn<LicenseFinding>[] = [
     {
@@ -258,7 +250,7 @@ function RouteComponent() {
 
       <GenericTable
         className="overflow-x-auto max-w-[calc(100vw-340px)]"
-        data={filteredFindings}
+        data={findings}
         columns={columns}
         title="License Findings"
         loading={isLoading}
@@ -278,6 +270,8 @@ function RouteComponent() {
         }
         enableColumnFilter
         filterButtonVariant="outline"
+        onSearchChange={handleSearch}
+        searchPlaceholder="Search licenses..."
         onRowClick={(finding) => setSelectedFinding(finding)}
       />
     </>

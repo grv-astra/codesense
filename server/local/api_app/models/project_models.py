@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from django.db.models import Q
 from local.api_app.models.orm import Project
 
 
@@ -41,9 +42,14 @@ class ProjectModel:
         ]
 
     @classmethod
-    def find_all(cls, page=1, limit=10):
+    def find_all(cls, page=1, limit=10, search=""):
         skip = (page - 1) * limit
         qs = Project.objects.filter(deleted=False)
+        s = (search or "").strip()
+        if s:
+            qs = qs.filter(
+                Q(name__icontains=s) | Q(description__icontains=s) | Q(preset__icontains=s)
+            )
         total = qs.count()
         rows = list(qs.order_by("created_at")[skip:skip + limit])
         return {

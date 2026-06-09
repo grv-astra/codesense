@@ -23,13 +23,20 @@ function RouteComponent() {
   const navigate = useNavigate()
   const scansPerPage = 10;
   const [currentPage, setCurrentPage] = useState(1);
+  const [search, setSearch] = useState('');
   const { projectId } = useParams({ from: '/_authenticated/project/$projectId/sbomscan' });
+
+  const handleSearch = (q: string) => {
+    setSearch(q);
+    setCurrentPage(1);
+  };
 
   // For server-side pagination
   const { data: scanResponse, isLoading, error } = useScans(projectId, {
     type: "sbom",
     page: currentPage,
     limit: scansPerPage,
+    search,
   });
   const deleteScanMutation = useDeleteSbomScan()
 
@@ -164,9 +171,11 @@ function RouteComponent() {
       onPageChange={setCurrentPage}
       emptyMessage="No projects found"
       onRowClick={handleRowClick}
-      rowClassName={() => 
+      rowClassName={() =>
         `hover:bg-gray-50 hover:dark:bg-gray-300/10`
       }
+      onSearchChange={handleSearch}
+      searchPlaceholder="Search scans..."
     />
   );
 }

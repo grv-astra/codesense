@@ -11,8 +11,9 @@ class ProjectListCreateView(APIView):
     def get(self, request):
         page = int(request.query_params.get("page", 1))
         limit = int(request.query_params.get("limit", 10))
+        search = request.query_params.get("search", "")
 
-        projects = ProjectModel.find_all(page=page, limit=limit)
+        projects = ProjectModel.find_all(page=page, limit=limit, search=search)
         return Response(projects, status=status.HTTP_200_OK)
 
     @require_permission("create_project")
