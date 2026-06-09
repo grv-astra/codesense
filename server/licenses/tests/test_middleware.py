@@ -1,6 +1,7 @@
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from django.http import JsonResponse
 from django.test import RequestFactory, SimpleTestCase, override_settings
@@ -22,10 +23,22 @@ class ReadOnlyGraceMiddlewareTests(SimpleTestCase):
             LICENSE_PLIST_PATH=str(Path(self.dir) / "second_store.plist"),
         )
         self._ov.enable()
+        # Isolate the Windows registry backend (no-op on macOS/Linux) so these
+        # tests don't read/write the REAL HKCU\Software\CodeSense stamp — an
+        # expired test stamp would otherwise corrupt the live app's license.
+        self._reg = {}
+        self._reg_read = mock.patch.object(
+            lic, "_registry_read", side_effect=lambda: self._reg.get("rec"))
+        self._reg_write = mock.patch.object(
+            lic, "_registry_write", side_effect=lambda rec: self._reg.__setitem__("rec", rec))
+        self._reg_read.start()
+        self._reg_write.start()
         self.mw = ReadOnlyGraceMiddleware(_ok_view)
         self.rf = RequestFactory()
 
     def tearDown(self):
+        self._reg_read.stop()
+        self._reg_write.stop()
         self._ov.disable()
 
     def _expire(self):

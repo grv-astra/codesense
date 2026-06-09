@@ -4,7 +4,7 @@ import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest import skipUnless
+from unittest import mock, skipUnless
 
 from django.test import SimpleTestCase, override_settings
 
@@ -27,8 +27,21 @@ class OfflineLicenseTests(SimpleTestCase):
             LICENSE_PLIST_PATH=self._plist,
         )
         self._ov.enable()
+        # Isolate the Windows registry backend with an in-memory store. Without
+        # this, on Windows the tests read/write the REAL HKCU\Software\CodeSense
+        # stamp — they pollute each other (one test's expired stamp leaks into the
+        # next) AND can corrupt the live app's license stamp. No-op on macOS/Linux.
+        self._reg = {}
+        self._reg_read = mock.patch.object(
+            lic, "_registry_read", side_effect=lambda: self._reg.get("rec"))
+        self._reg_write = mock.patch.object(
+            lic, "_registry_write", side_effect=lambda rec: self._reg.__setitem__("rec", rec))
+        self._reg_read.start()
+        self._reg_write.start()
 
     def tearDown(self):
+        self._reg_read.stop()
+        self._reg_write.stop()
         self._ov.disable()
 
     def _file(self):
