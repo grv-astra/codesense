@@ -8,7 +8,7 @@ class UserModelTests(TestCase):
             email="a@x.com", hashed_password="h", name="Ann", company="X", role="Admin"
         )
         self.assertEqual(user["email"], "a@x.com")
-        self.assertEqual(user["role"], "Admin")
+        self.assertEqual(user["role"], "admin")  # stored lowercase regardless of input casing
         self.assertFalse(user["deleted"])
         self.assertIn("id", user)
         self.assertIsNotNone(user["created_at"])
@@ -19,7 +19,7 @@ class UserModelTests(TestCase):
         self.assertEqual(raw["password"], "secret")
         self.assertEqual(raw["email"], "b@x.com")
         self.assertIn("_id", raw)
-        self.assertEqual(raw["role"], "User")
+        self.assertEqual(raw["role"], "user")  # default role, stored lowercase
 
     def test_find_by_email_excludes_deleted(self):
         UserModel.create_user(email="c@x.com", hashed_password="h", name="C", deleted=True)

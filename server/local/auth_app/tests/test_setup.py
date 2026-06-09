@@ -17,7 +17,7 @@ class SetupServiceTests(TestCase):
 
     def test_create_initial_admin_seeds_admin_and_blocks_second_run(self):
         admin = create_initial_admin("root@x.com", "Str0ng!Pass1", "Root")
-        self.assertEqual(admin["role"], "Admin")
+        self.assertEqual(admin["role"], "admin")  # roles are stored lowercase
         self.assertFalse(is_setup_needed())
         # default role permissions seeded
         self.assertEqual(PermissionModel.get_permissions_for_role("user"),

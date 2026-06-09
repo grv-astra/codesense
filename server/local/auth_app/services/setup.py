@@ -25,7 +25,7 @@ def create_initial_admin(email: str, password: str, name: str, company: str = No
             raise RuntimeError("Setup already completed: an admin account already exists.")
         admin = UserModel.create_user(
             email=email, hashed_password=hash_password(password),
-            name=name, company=company, role="Admin",
+            name=name, company=company, role="admin",
         )
         _seed_default_permissions()
     # Start the offline license clock at first-run setup.

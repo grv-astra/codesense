@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from django.db.models import Q
 from local.auth_app.models.orm import User
 
 
@@ -52,11 +53,16 @@ class UserModel:
         }
 
     @staticmethod
-    def find_all(page=1, limit=10, role="user"):
+    def find_all(page=1, limit=10, role="user", search=""):
         skip = (page - 1) * limit
         qs = User.objects.filter(deleted=False)
         if role == "manager":
-            qs = qs.exclude(role="admin")
+            qs = qs.exclude(role__iexact="admin")
+        s = (search or "").strip()
+        if s:
+            qs = qs.filter(
+                Q(name__icontains=s) | Q(email__icontains=s) | Q(role__icontains=s)
+            )
         total = qs.count()
         rows = list(qs.order_by("created_at")[skip:skip + limit])
         return {
@@ -85,11 +91,13 @@ class UserModel:
         return UserModel._raw(User.objects.filter(id=user_id).first())
 
     @staticmethod
-    def create_user(email, hashed_password, name, company=None, role="User", deleted=False):
+    def create_user(email, hashed_password, name, company=None, role="user", deleted=False):
         now = datetime.now(timezone.utc)
+        # Roles are stored lowercase ("admin"/"manager"/"user") so the case-sensitive
+        # role checks (frontend sidebar/route gates, user_model exclude) match.
         user = User.objects.create(
             email=email, password=hashed_password, name=name, company=company,
-            role=role, deleted=deleted, created_at=now, updated_at=now,
+            role=(role or "user").lower(), deleted=deleted, created_at=now, updated_at=now,
         )
         return UserModel.find_by_id(user.id)
 
