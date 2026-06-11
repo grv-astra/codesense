@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'rest_framework',  # needed for the Browsable API templates/static (HTML renderer)
     'local.auth_app',
     'local.api_app',
     'scanner',
