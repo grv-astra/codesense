@@ -15,8 +15,9 @@ import sys
 
 
 def main():
-    host = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
-    port = int(sys.argv[2]) if len(sys.argv) > 2 else 8585
+    # argv wins (desktop launcher), else env (cloud hosts inject PORT), else local default.
+    host = sys.argv[1] if len(sys.argv) > 1 else os.getenv("HOST", "127.0.0.1")
+    port = int(sys.argv[2]) if len(sys.argv) > 2 else int(os.getenv("PORT", "8585"))
 
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "codesense.settings")
 
@@ -25,6 +26,8 @@ def main():
 
     from django.core.management import call_command
     call_command("migrate", interactive=False, verbosity=0)
+    # Gather admin/DRF assets so they render with DEBUG off (no-op if already present).
+    call_command("collectstatic", interactive=False, verbosity=0)
 
     from waitress import serve
     from codesense.wsgi import application

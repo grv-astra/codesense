@@ -44,6 +44,10 @@ SECRET_KEY = _load_or_create_secret_key()
 
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
 
+# Cloud hosts (e.g. Railway) serve over HTTPS on a generated domain; Django needs the
+# scheme-qualified origin trusted for admin/CSRF-protected POSTs. Comma-separated env.
+CSRF_TRUSTED_ORIGINS = [o for o in os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",") if o]
+
 
 # Application definition
 
@@ -64,6 +68,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',  # <-- must be first!
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',  # serves static files with DEBUG off
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -168,6 +173,12 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / "staticfiles"
+# WhiteNoise: compress + serve static directly from the app process (no separate CDN).
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedStaticFilesStorage"},
+}
 
 CENTRAL_URL = os.getenv("CENTRAL_URL")
 LOCAL_KEYS_DIR = os.getenv("LOCAL_KEYS_DIR")
