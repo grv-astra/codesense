@@ -36,6 +36,12 @@ class LsastScanFolderTests(SimpleTestCase):
         # default (hermetic); a dedicated test below exercises the wiring.
         p = mock.patch("scanner.rag.lsast_scanner.generate_report", return_value=None)
         p.start(); self.addCleanup(p.stop)
+        # The orchestrator now probes LLM availability and publishes progress
+        # incrementally; keep both out of these hermetic (DB-less) unit tests.
+        h = mock.patch("scanner.rag.lsast_scanner.llm_health", return_value=(True, "ok"))
+        h.start(); self.addCleanup(h.stop)
+        up = mock.patch("scanner.rag.lsast_scanner.update_progress")
+        up.start(); self.addCleanup(up.stop)
 
     @mock.patch("scanner.rag.lsast_scanner.save_findings_to_db")
     @mock.patch("scanner.rag.lsast_scanner.verify")
@@ -122,10 +128,30 @@ class LsastScanFolderTests(SimpleTestCase):
         self.assertEqual(f["severity"], "high")                        # deterministic, untouched
 
 
+    @mock.patch("scanner.rag.lsast_scanner.save_findings_to_db")
+    @mock.patch("scanner.rag.lsast_scanner.verify")
+    @mock.patch("scanner.rag.lsast_scanner.run_semgrep")
+    def test_llm_unavailable_keeps_findings_and_skips_verify(self, mock_run, mock_verify, mock_save):
+        """When the LLM can't do inference (e.g. bad API key), the scan still
+        returns the deterministic findings and does NOT call the AI verifier."""
+        mock_run.return_value = [_sqli_finding()]
+        with mock.patch("scanner.rag.lsast_scanner.llm_health",
+                        return_value=(False, "auth: invalid key")):
+            visible, filtered = lsast_scan_folder("/tmp/code", "s1", "u1")
+        self.assertEqual(len(visible), 1)        # deterministic finding preserved
+        self.assertEqual(filtered, [])
+        mock_verify.assert_not_called()          # AI verify skipped when LLM is down
+        mock_save.assert_called_once()           # still persisted (incrementally)
+
+
 class LanguageRoutingTests(SimpleTestCase):
     def setUp(self):
         p = mock.patch("scanner.rag.lsast_scanner.generate_report", return_value=None)
         p.start(); self.addCleanup(p.stop)
+        h = mock.patch("scanner.rag.lsast_scanner.llm_health", return_value=(True, "ok"))
+        h.start(); self.addCleanup(h.stop)
+        up = mock.patch("scanner.rag.lsast_scanner.update_progress")
+        up.start(); self.addCleanup(up.stop)
 
     @mock.patch("scanner.rag.lsast_scanner.save_findings_to_db")
     @mock.patch("scanner.rag.lsast_scanner.verify")

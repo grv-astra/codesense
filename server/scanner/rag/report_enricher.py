@@ -18,12 +18,35 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 
 from scanner.rag.llm import get_ready_llm
 from scanner.rag.llm_verifier import _extract_json_object
 from scanner.rag.lsast_types import DataflowContext, FindingReport
 
 logger = logging.getLogger(__name__)
+
+# A weak model often echoes the prompt's "<…>" placeholders (e.g. "<what the
+# issue is>") instead of writing real prose. Match a "<letter…>" token but not
+# math like "x < 5 and y > 3", so we only catch genuine placeholder echoes.
+_PLACEHOLDER_RE = re.compile(r"<[A-Za-z][^>\n]{1,60}>")
+
+
+def _looks_like_placeholder(text: str) -> bool:
+    return bool(text) and bool(_PLACEHOLDER_RE.search(text))
+
+
+def _sanitize_report(report: FindingReport) -> FindingReport | None:
+    """Blank any field that's a placeholder echo; return None if nothing usable
+    survives, so the caller keeps the deterministic detector-derived fields."""
+    name = "" if _looks_like_placeholder(report.name) else report.name
+    description = "" if _looks_like_placeholder(report.description) else report.description
+    impact = "" if _looks_like_placeholder(report.impact) else report.impact
+    remediation = "" if _looks_like_placeholder(report.remediation) else report.remediation
+    if not any([name, description, impact, remediation]):
+        return None
+    return FindingReport(name=name, description=description,
+                         impact=impact, remediation=remediation)
 
 # The report is longer than the verifier's one-line verdict, so it needs more
 # output headroom than the client's default cap.
@@ -81,7 +104,12 @@ def generate_report(*, rule_name: str, cwe: str, language: str,
     report = FindingReport.from_json(_extract_json_object(raw))
     if report is None:
         logger.debug("Report enrichment unparseable; keeping detector fields. raw=%r", raw[:200])
-    return report
+        return None
+    guarded = _sanitize_report(report)
+    if guarded is None:
+        logger.debug("Report enrichment looked like echoed placeholders; keeping "
+                     "detector fields. raw=%r", raw[:200])
+    return guarded
 
 
 def apply_report(finding: dict, report: FindingReport | None) -> dict:
@@ -90,12 +118,12 @@ def apply_report(finding: dict, report: FindingReport | None) -> dict:
     Mutates and returns the dict. CWE / severity / location are never touched."""
     if report is None:
         return finding
-    if report.name:
+    if report.name and not _looks_like_placeholder(report.name):
         finding["title"] = report.name[:200]
-    if report.description:
+    if report.description and not _looks_like_placeholder(report.description):
         finding["description"] = report.description
-    if report.impact:
+    if report.impact and not _looks_like_placeholder(report.impact):
         finding["security_risk"] = report.impact
-    if report.remediation:
+    if report.remediation and not _looks_like_placeholder(report.remediation):
         finding["mitigation"] = report.remediation
     return finding

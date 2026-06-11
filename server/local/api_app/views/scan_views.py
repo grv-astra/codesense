@@ -267,16 +267,6 @@ class ModelHealthView(APIView):
         client = get_llm()
         try:
             health = client.healthcheck()
-            return Response(
-                {
-                    "status": "ok",
-                    "provider": "vllm",
-                    "base_url": health["base_url"],
-                    "configured_model": health["configured_model"],
-                    "available_models": health["available_models"],
-                },
-                status=status.HTTP_200_OK,
-            )
         except Exception as exc:
             return Response(
                 {
@@ -288,6 +278,22 @@ class ModelHealthView(APIView):
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
+
+        # /models can be unauthenticated — validate inference (API key) for real
+        # so the reported status reflects whether scans can actually use the LLM.
+        inference_ok, inference_detail = client.check_inference()
+        return Response(
+            {
+                "status": "ok" if inference_ok else "degraded",
+                "provider": "vllm",
+                "base_url": health["base_url"],
+                "configured_model": health["configured_model"],
+                "available_models": health["available_models"],
+                "inference_ok": inference_ok,
+                "inference_detail": inference_detail,
+            },
+            status=status.HTTP_200_OK if inference_ok else status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
 @method_decorator(csrf_exempt, name="dispatch")
 class SbomCreateView(APIView):

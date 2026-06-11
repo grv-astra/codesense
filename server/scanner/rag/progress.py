@@ -3,8 +3,14 @@ from local.api_app.models.orm import Scan
 
 
 def update_progress(scan_id, scanned=None, total=None, status=None,
-                    end_time=None, findings=None, error=None, metrics=None):
-    """Update scan progress + AST metrics on the SQLite Scan row."""
+                    end_time=None, findings=None, error=None, metrics=None,
+                    extra_metrics=None):
+    """Update scan progress + AST metrics on the SQLite Scan row.
+
+    ``extra_metrics`` merges keys into the existing metrics JSON (read-modify-
+    write) rather than replacing it — used to attach live signals like LLM
+    availability without clobbering the AST metrics.
+    """
     fields = {"last_updated": datetime.now(timezone.utc)}
     if scanned is not None:
         fields["files_scanned"] = scanned
@@ -20,6 +26,12 @@ def update_progress(scan_id, scanned=None, total=None, status=None,
         fields["error"] = error
     if metrics is not None:
         fields["metrics"] = metrics
+    if extra_metrics:
+        scan = Scan.objects.filter(id=scan_id).first()
+        if scan:
+            merged = dict(scan.metrics or {})
+            merged.update(extra_metrics)
+            fields["metrics"] = merged
     Scan.objects.filter(id=scan_id).update(**fields)
 
 

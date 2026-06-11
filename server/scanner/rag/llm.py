@@ -38,6 +38,11 @@ class VLLMConnectionError(RuntimeError):
     pass
 
 
+class VLLMAuthError(VLLMConnectionError):
+    """The endpoint rejected our API key (HTTP 401/403). Not retryable."""
+    pass
+
+
 class VLLMClient:
     def __init__(self):
         self.base_url = _normalize_base_url(os.getenv("VLLM_BASE_URL"))
@@ -231,6 +236,15 @@ class VLLMClient:
                     timeout=self.timeout,
                 )
 
+                if response.status_code in (401, 403):
+                    # Wrong/missing API key — retrying won't help, so fail fast
+                    # with a clear, actionable message (caught upstream as a
+                    # VLLMConnectionError subclass → no retry loop).
+                    raise VLLMAuthError(
+                        f"LLM rejected the API key (HTTP {response.status_code}); "
+                        "check VLLM_API_KEY matches the model server/gateway key."
+                    )
+
                 if response.status_code == 400:
                     try:
                         err = response.json()
@@ -263,6 +277,21 @@ class VLLMClient:
 
         return {"result": ""}
 
+    def check_inference(self) -> tuple[bool, str]:
+        """Validate the *inference* endpoint + API key with a 1-token call.
+
+        healthcheck() only hits the (often unauthenticated) /models endpoint, so
+        it can report OK while inference 401s. This actually exercises auth.
+        Returns (ok, detail) — never raises.
+        """
+        try:
+            self.invoke({"query": "ping", "max_tokens": 1})
+            return True, "ok"
+        except VLLMAuthError as exc:
+            return False, f"auth: {exc}"
+        except Exception as exc:  # noqa: BLE001
+            return False, str(exc)
+
 
 # ------------------------------------------------------------------ #
 # SINGLETON
@@ -270,6 +299,18 @@ class VLLMClient:
 
 def get_llm() -> VLLMClient:
     return VLLMClient()
+
+
+def llm_health() -> tuple[bool, str]:
+    """One-shot (ok, detail) for whether AI verify/enrich can run this scan.
+
+    Unlike get_ready_llm()/healthcheck() (which only pings the open /models
+    endpoint), this validates that inference actually works with the API key.
+    """
+    try:
+        return get_llm().check_inference()
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
 
 
 def get_ready_llm(force_healthcheck: bool = False) -> VLLMClient:
