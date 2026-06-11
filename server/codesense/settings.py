@@ -126,6 +126,10 @@ CORS_ALLOWED_ORIGINS = [
 # django-cors-headers versions only exact-match http(s) entries in the list above.
 CORS_ALLOWED_ORIGIN_REGEXES = [r"^tauri://localhost$"]
 
+# Extra browser origins for a hosted web frontend (comma-separated), e.g. the
+# Railway frontend URL. Added on top of the desktop/localhost origins above.
+CORS_ALLOWED_ORIGINS += [o for o in os.getenv("DJANGO_CORS_ALLOWED_ORIGINS", "").split(",") if o]
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         # Your JWT middleware sets request.user — no DRF auth class needed
