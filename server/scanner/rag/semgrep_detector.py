@@ -21,6 +21,30 @@ logger = logging.getLogger(__name__)
 
 _SEVERITY_MAP = {"ERROR": "high", "WARNING": "medium", "INFO": "low"}
 
+# Semgrep redacts the matched-code `lines` field as "requires login" for registry
+# rules when run unauthenticated (the cloud uses `--config p/...` registry packs).
+# We detect that and recover the snippet from disk instead.
+_REDACTED_MARKERS = ("requires login",)
+
+
+def _read_code_lines(file_path: str, start_line: int, end_line: int) -> str:
+    """Best-effort read of the matched source lines from disk; "" on any error.
+
+    Recovers the code snippet when the engine redacts it. The scanned files still
+    exist on disk at this point (the temp extraction dir is cleaned up only after
+    the scan completes).
+    """
+    try:
+        if not file_path or not start_line or start_line < 1:
+            return ""
+        with open(file_path, "r", encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+        lo = start_line - 1
+        hi = max(end_line or start_line, start_line)
+        return "".join(lines[lo:hi]).rstrip("\n")[:2000]
+    except OSError:
+        return ""
+
 _DEFAULT_REGISTRY_PACKS = ["p/security-audit", "p/owasp-top-ten", "p/secrets"]
 
 _TIMEOUT_SECONDS = 300
@@ -278,4 +302,14 @@ def run_semgrep(folder_path: str) -> list[SemgrepFinding]:
         logger.warning("Semgrep failed (rc=%d): %s", result.returncode, result.stderr[:500])
         return []
 
-    return parse_semgrep_json(result.stdout)
+    findings = parse_semgrep_json(result.stdout)
+    # Recover the code snippet from disk when the engine redacted it (registry
+    # rules emit "requires login" when unauthenticated). This fixes the stored
+    # snippet AND the code the LLM verifier/enricher reasons over.
+    for f in findings:
+        excerpt = (f.code_excerpt or "").strip().lower()
+        if not excerpt or any(m in excerpt for m in _REDACTED_MARKERS):
+            recovered = _read_code_lines(f.file_path, f.start_line, f.end_line)
+            if recovered:
+                f.code_excerpt = recovered
+    return findings

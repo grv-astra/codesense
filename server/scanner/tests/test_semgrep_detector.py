@@ -5,7 +5,7 @@ from unittest import mock
 from django.test import SimpleTestCase
 
 from scanner.rag.semgrep_detector import (
-    run_semgrep, parse_semgrep_json, derive_cwe, _extract_taint_trace)
+    run_semgrep, parse_semgrep_json, derive_cwe, _extract_taint_trace, _read_code_lines)
 from scanner.rag.lsast_types import SemgrepFinding
 
 
@@ -167,3 +167,37 @@ class ExtractTaintTraceTests(SimpleTestCase):
         self.assertEqual(_extract_taint_trace({}), [])
         self.assertEqual(
             _extract_taint_trace({"dataflow_trace": {"taint_source": ["weird", 123, None]}}), [])
+
+
+class CodeSnippetRecoveryTests(SimpleTestCase):
+    """Semgrep redacts the `lines` field as 'requires login' for registry rules
+    when unauthenticated (the cloud uses registry packs). run_semgrep recovers
+    the real snippet from disk so the stored snippet + LLM context aren't blank."""
+
+    def test_read_code_lines_reads_range(self):
+        import os, tempfile
+        p = os.path.join(tempfile.mkdtemp(), "x.py")
+        Path(p).write_text("a=1\nb=2\nc=3\n")
+        self.assertEqual(_read_code_lines(p, 2, 2), "b=2")
+        self.assertEqual(_read_code_lines(p, 1, 3), "a=1\nb=2\nc=3")
+
+    def test_read_code_lines_handles_bad_input(self):
+        self.assertEqual(_read_code_lines("/no/such/file", 1, 1), "")
+        self.assertEqual(_read_code_lines("", 0, 0), "")
+
+    @mock.patch("scanner.rag.semgrep_detector.subprocess.run")
+    def test_run_semgrep_recovers_redacted_snippet(self, mock_run):
+        import os, tempfile
+        p = os.path.join(tempfile.mkdtemp(), "installation.py")
+        Path(p).write_text("\n".join(f"row{i}" for i in range(1, 10)))
+        doc = {"results": [{
+            "check_id": "python.lang.security.audit.dangerous-subprocess-use",
+            "path": p,
+            "start": {"line": 3}, "end": {"line": 3},
+            "extra": {"lines": "requires login", "message": "m",
+                      "severity": "WARNING", "metadata": {"cwe": ["CWE-78"]}},
+        }]}
+        mock_run.return_value = mock.Mock(returncode=0, stdout=json.dumps(doc), stderr="")
+        findings = run_semgrep(p)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].code_excerpt, "row3")   # recovered from disk
