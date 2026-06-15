@@ -50,5 +50,12 @@ def scan_folder(folder_path, scan_id, triggered_by, scan_name):
         status="completed",
         end_time=datetime.now(timezone.utc),
     )
+    # Consume a trial slot only on successful completion (no-op when trial mode is
+    # off). Failures raise before reaching here, so they never count.
+    try:
+        from licenses.services import trial
+        trial.record_completion()
+    except Exception as exc:  # noqa: BLE001 — trial accounting must never sink a scan
+        logger.warning("trial.record_completion failed: %s", exc)
     logger.info("LSAST scan completed: %d findings for %s", len(visible), scan_name or "Unknown")
     return visible

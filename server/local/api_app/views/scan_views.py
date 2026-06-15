@@ -15,6 +15,7 @@ import threading
  
 from local.auth_app.permissions.decorators import require_permission
 from licenses.services.auth import require_assertion_jwt
+from licenses.services import trial
 from rest_framework.response import Response
 import asyncio
 from scanner.services.scan_service import scan_github_repo
@@ -40,6 +41,13 @@ class ScanCreateView(APIView):
     @require_permission("create_scan")
     # @require_assertion_jwt("scan", force_refresh=True)
     def post(self, request):
+        if not trial.can_start():
+            return JsonResponse(
+                {"detail": f"Trial limit reached — {trial.used()}/{trial.limit()} "
+                           f"scans used. Contact us to upgrade to the full version.",
+                 "trial": trial.status()},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         serializer = ScanStartSerializer(data=request.data)
         user = request.user
         triggered_by = user.get("id", "68863cf8ee93d4964a00d585")
@@ -181,6 +189,13 @@ class GitHubRepoScanView(APIView):
     @require_permission("create_scan")
     # @require_assertion_jwt("scan", force_refresh=True)
     def post(self, request):
+        if not trial.can_start():
+            return Response(
+                {"detail": f"Trial limit reached — {trial.used()}/{trial.limit()} "
+                           f"scans used. Contact us to upgrade to the full version.",
+                 "trial": trial.status()},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         token = request.data.get("token") or request.data.get("git_token")
         username = request.data.get("username") or request.data.get("git_rowner")
         repo = request.data.get("repo") or request.data.get("git_repo")
