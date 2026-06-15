@@ -11,6 +11,7 @@ import {
 import type { SelectCardOption } from '@/components/atomic/select';
 import { useProjectNames } from '@/hooks/use-project';
 import { useCreateSbomScan, useCreateScan } from '@/hooks/use-scans';
+import { useTrialStatus, isTrialExhausted } from '@/hooks/use-trial';
 import type { CreateScanDetails } from '@/types/scan';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import {
@@ -85,6 +86,11 @@ function RouteComponent() {
   const navigate = useNavigate();
   const createScanMutation = useCreateScan();
   const createSbomScanMutation = useCreateSbomScan();
+
+  // Trial mode (driven by the backend): hide SBOM and cap scans.
+  const { data: trial } = useTrialStatus();
+  const scanTypes = trial?.trial_mode ? SCAN_TYPES.filter(t => t.value !== 'sbom') : SCAN_TYPES;
+  const trialBlocked = isTrialExhausted(trial);
 
   const [formData, setFormData] = useState<CreateScanDetails>({
     scan_name: '',
@@ -285,7 +291,7 @@ function RouteComponent() {
               <section>
                 <SectionHeading step={2} title="Scan type" />
                 <SelectCards
-                  options={SCAN_TYPES}
+                  options={scanTypes}
                   value={formData.scan_type}
                   onValueChange={handleScanTypeChange}
                   columns={3}
@@ -372,16 +378,27 @@ function RouteComponent() {
 
             {/* Footer */}
             <div className="px-7 py-4 border-t border-gray-100 dark:border-white/[0.07] flex items-center justify-between gap-4">
-              <p className="text-[12px] text-gray-400 dark:text-gray-500">
-                All fields are required to start a scan.
-              </p>
+              <div className="text-[12px] text-gray-400 dark:text-gray-500">
+                {trial?.trial_mode ? (
+                  <span className={trialBlocked ? 'text-red-600 dark:text-red-400 font-medium' : ''}>
+                    Trial: {trial.used}/{trial.limit} scans used
+                    {trialBlocked
+                      ? ' — limit reached. Contact us to upgrade.'
+                      : ` (${trial.remaining} left)`}
+                  </span>
+                ) : (
+                  'All fields are required to start a scan.'
+                )}
+              </div>
 
               <button
                 type="submit"
-                disabled={isSubmitting || submitted}
+                disabled={isSubmitting || submitted || trialBlocked}
                 className={[
                   'inline-flex items-center gap-2 px-5 h-10 rounded-lg text-[13px] font-semibold transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#bf0000]',
-                  submitted
+                  trialBlocked
+                    ? 'bg-gray-400 dark:bg-[#505050] text-white cursor-not-allowed'
+                    : submitted
                     ? 'bg-emerald-600 text-white cursor-default'
                     : isSubmitting
                     ? 'bg-[#bf0000]/70 text-white cursor-wait'

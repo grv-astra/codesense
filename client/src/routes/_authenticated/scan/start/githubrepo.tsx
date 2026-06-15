@@ -11,6 +11,7 @@ import {
 import type { SelectCardOption } from '@/components/atomic/select';
 import { useProjectNames } from '@/hooks/use-project';
 import { useCreateGithubScan } from '@/hooks/use-scans';
+import { useTrialStatus, isTrialExhausted } from '@/hooks/use-trial';
 import type { CreateGithubScans } from '@/types/scan';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import {
@@ -80,6 +81,11 @@ function ErrorText({ message }: { message?: string }) {
 function RouteComponent() {
   const navigate = useNavigate();
   const createScanMutation = useCreateGithubScan();
+
+  // Trial mode (driven by the backend): hide SBOM and cap scans.
+  const { data: trial } = useTrialStatus();
+  const scanTypes = trial?.trial_mode ? SCAN_TYPES.filter(t => t.value !== 'sbom') : SCAN_TYPES;
+  const trialBlocked = isTrialExhausted(trial);
 
   const [formData, setFormData] = useState<CreateGithubScans>({
     scan_name: '',
@@ -213,7 +219,7 @@ function RouteComponent() {
               <section>
                 <SectionHeading step={2} title="Scan type" />
                 <SelectCards
-                  options={SCAN_TYPES}
+                  options={scanTypes}
                   value={formData.scan_type}
                   onValueChange={handleScanTypeChange}
                 />
@@ -264,16 +270,27 @@ function RouteComponent() {
 
             {/* Footer */}
             <div className="px-7 py-4 border-t flex justify-between items-center">
-              <p className="text-[12px] text-gray-400">
-                All fields are required.
-              </p>
+              <div className="text-[12px] text-gray-400">
+                {trial?.trial_mode ? (
+                  <span className={trialBlocked ? 'text-red-600 dark:text-red-400 font-medium' : ''}>
+                    Trial: {trial.used}/{trial.limit} scans used
+                    {trialBlocked
+                      ? ' — limit reached. Contact us to upgrade.'
+                      : ` (${trial.remaining} left)`}
+                  </span>
+                ) : (
+                  'All fields are required.'
+                )}
+              </div>
 
               <button
                 type="submit"
-                disabled={isSubmitting || submitted}
+                disabled={isSubmitting || submitted || trialBlocked}
                 className={[
                   'inline-flex items-center gap-2 px-5 h-10 rounded-lg text-[13px] font-semibold',
-                  submitted
+                  trialBlocked
+                    ? 'bg-gray-400 dark:bg-[#505050] text-white cursor-not-allowed'
+                    : submitted
                     ? 'bg-emerald-600 text-white'
                     : isSubmitting
                     ? 'bg-[#bf0000]/70 text-white'
