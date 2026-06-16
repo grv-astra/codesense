@@ -61,7 +61,9 @@ def verify(*, cwe: str, language: str,
                                 confidence=0.3)
     try:
         client = get_ready_llm()
-        response = client.invoke({"query": prompt}) or {}
+        response = client.invoke(
+            {"query": prompt, "response_format": {"type": "json_object"}}
+        ) or {}
     except Exception as exc:        # noqa: BLE001 — fail-open by design
         logger.warning("LLM verifier call failed: %s", exc)
         return fail_open
