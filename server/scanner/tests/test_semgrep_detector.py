@@ -137,6 +137,23 @@ class DeriveCweTests(SimpleTestCase):
         # An explicit (even unusual) CWE wins over a keyword guess from the id.
         self.assertEqual(derive_cwe({"cwe": "CWE-1234"}, "x.sqli.tainted-sql"), "CWE-1234")
 
+    def test_command_exec_cwe94_corrected_to_cwe78(self):
+        # Upstream php rules (tainted-exec, exec-use) tag their shell_exec/system/
+        # exec/passthru/proc_open sinks as CWE-94 (code injection), but an OS
+        # command-execution sink is CWE-78. Correct that mislabel.
+        cwe94 = "CWE-94: Improper Control of Generation of Code ('Code Injection')"
+        self.assertEqual(derive_cwe({"cwe": cwe94}, "php.lang.security.tainted-exec"), "CWE-78")
+        self.assertEqual(derive_cwe({"cwe": cwe94}, "php.lang.security.exec-use"), "CWE-78")
+        self.assertEqual(
+            derive_cwe({"cwe": cwe94}, "php.wordpress.wp-command-execution-audit"), "CWE-78")
+
+    def test_genuine_code_injection_stays_cwe94(self):
+        # eval/assert/create_function code-injection rules are REALLY CWE-94 — the
+        # correction must not touch them (no OS-command-exec signal in the id).
+        cwe94 = "CWE-94: Improper Control of Generation of Code ('Code Injection')"
+        self.assertEqual(derive_cwe({"cwe": cwe94}, "php.lang.security.eval-use"), "CWE-94")
+        self.assertEqual(derive_cwe({}, "js.lang.security.code-injection"), "CWE-94")
+
 
 class ExtractTaintTraceTests(SimpleTestCase):
     """Taint trace must parse BOTH engine shapes and never raise (an unparsed
