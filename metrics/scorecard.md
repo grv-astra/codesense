@@ -69,9 +69,66 @@ in `scripts/eval/tests/test_scorecard.py`.
   bundled GGUF + llama-server + OpenGrep). Re-recorded W11/W12 after the model swap (the
   Apache 7B Q4_K_M is ~4.7 GB).
 
-## Status vs §9 thresholds (this week)
+## Status vs §9 thresholds (W1)
 
 - Detector: **PASS** (F1 1.000 ≥ 0.70, recall 1.000 ≥ 0.60, FP 0.000 ≤ 0.25) — on N=4.
 - Verifier Tier-2: **not yet measurable** (model-bound; W4).
 - The W1 deliverable is the *baseline + the characterization lock*, not hitting the verifier
   bar — that is W4's milestone.
+
+## Week 4 (Verifier accuracy) — 2026-06-22
+
+First measurement with a working verifier: the W2 Apache-2.0 instruct model
+(Qwen2.5-Coder-7B-Instruct Q4_K_M) served locally + the W4.1 verifier-prompt fix
+(explicit TP/FP semantics, default-FP). Branch `week4-verifier-accuracy`.
+
+| Metric | W1 baseline | W4 | Target (§9) |
+|---|---|---|---|
+| Verifier FP-suppression | 0.000 (FIM rubber-stamped TP) | **working** — emits FP on safe code (see A/B) | — |
+| Verifier Tier-2 F1 (curated) | N/A | **1.000** (P=R=1.0, FP-rate=0.0) ⚠️ see caveat | ≥ 0.70 |
+| Verifier Tier-2 FP-rate (curated) | N/A | **0.000** ⚠️ see caveat | ≤ 0.25 |
+
+### Provenance & caveats
+
+- **Tier-2 on curated (`--dataset curated`)** — built verifier samples by running the
+  real detector on each curated case to get its dataflow + code, then ran the **live**
+  verifier (instruct mode, `127.0.0.1:8001`). Result: **tp=2 fp=0 fn=0 tn=0 →
+  P=R=F1=1.000, FP-rate=0.000**. Both real cases (`py_sqli_unsafe`, `js_cmdi_unsafe`)
+  correctly kept as TP at conf 1.00.
+  ⚠️ **Curated does not exercise FP-suppression.** The detector flags **0 of the 2 safe
+  cases** (`py_sqli_safe`, `js_cmdi_safe` are detector TNs — already its FP-rate=0.000), so
+  **no false positive ever reaches the verifier** on this set. The 1.000/0.000 here is a
+  clean pass but a *trivial* one for the verifier. Measuring real verifier FP-suppression
+  needs cases where the detector over-flags safe code — see the A/B below; grow the curated
+  set with detector-FP cases (parameterized/prepared queries the rules still flag) in a
+  later week.
+- **FP-suppression evidence (A/B, DVWA-shaped)** — the verifier was run on 4 hand-built
+  safe/unsafe pairs that mimic the DVWA regression (last week the FIM model flagged the
+  secure `impossible.*` files identically to vulnerable ones):
+  - PDO prepared statement (`impossible.php` shape) → **FP** ✓ (the exact W3 regression)
+  - constant / not-attacker-controlled → **FP** ✓
+  - string-concat SQLi (`low` shape) → **TP** ✓
+  - Python DBAPI `execute(sql, params)` `%s`/`?` parameterization → **TP ✗** (the 7B
+    conflates safe bound-parameter placeholders with `%`-string-formatting). **3/4.**
+  The one miss errs toward **TP** (a spurious flag, not a missed vuln) — the safe direction
+  for a security tool. Net vs W1: the verifier went from *never* emitting FP (0.000) to
+  correctly suppressing the real DVWA false-positive shapes.
+- **Fusion behaviour (confirmed, with an important nuance)** — `fuse()` suppresses an FP
+  verdict **only at low/medium severity** (`status="filtered"`). A **high/critical** FP
+  verdict is **not dropped** — it becomes `needs_review`, titled `[verifier:FP] …`, "never
+  drop a high-severity finding on a 3B model's say-so." So DVWA's `impossible.*` SQLi (HIGH)
+  now re-classifies from a confident *show* to `needs_review` tagged `[verifier:FP]` with the
+  FP reason — a real improvement, but **not full suppression** of high-severity FPs.
+  **Open question for the user:** now that the 7B verifier discriminates reliably, should a
+  high-confidence high-severity FP be down-ranked/suppressed rather than kept as
+  `needs_review`? That is a fusion-policy change, deliberately out of scope this week.
+
+### Status vs §9 thresholds (W4)
+
+- Verifier Tier-2 (curated): **PASS** (F1 1.000 ≥ 0.70, recall 1.000 ≥ 0.60, FP 0.000 ≤
+  0.25) — but on N=2 reaching the verifier, and **not exercising FP-suppression** (caveat
+  above). Treat as "verifier no longer regresses real findings", not as a headline
+  FP-suppression number.
+- The substantive W4.1 win is qualitative + A/B-proven: the verifier now emits `FP` on safe
+  code (PDO-prepared, constants) where the FIM model could not. A statistically meaningful
+  FP-suppression headline needs a curated set with genuine detector false positives.
