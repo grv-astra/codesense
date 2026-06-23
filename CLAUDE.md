@@ -9,7 +9,31 @@ before acting (full developer onboarding: `docs/handoff/onboarding.md`). This fi
   (index) with the design spec in `docs/superpowers/specs/2026-05-31-codesense-12week-roadmap-design.md`
   and per-phase plans (`...-phase1/2/3.md`) alongside the README. Execution model: one session per week,
   context reset between; each week ends with its acceptance test green + docs updated + next-week brief.
-- **Position: Week 1 DONE (2026-06-10), pre-Week-2.** Environment reconstituted (repo from bundle,
+- **Position: PHASE 1 COMPLETE (W1–W5, 2026-06-23). Pre-Phase-2 (W6).** Milestone "LLM quality fixed"
+  reached. Branch `week5-enrichment-tiers` (off `week4-verifier-accuracy`, committed locally, NOT pushed).
+  Scanner suite **132 pass / 2 skip**; characterization snapshot green throughout. Phase 1 summary:
+  - **W2 — license-safe instruct model** ✅ (branch `week2-instruct-model`, pushed, no PR): `model_mode()`
+    flag (`LLM_MODEL_MODE=instruct`); the bundled GGUF is now **Qwen2.5-Coder-7B-Instruct Q4_K_M
+    (Apache-2.0)** — non-commercial-license blocker RESOLVED. FIM path byte-for-byte unchanged when the
+    flag is off.
+  - **W3 — instruct/JSON path** ✅ (shipped in the W2 branch): `VLLMClient.invoke()` instruct branch +
+    `response_format:{type:json_object}` wired from verifier & enricher; A/B-validated in W4.
+  - **W4 — verifier discriminates** ✅ (branch `week4-verifier-accuracy`, pushed, no PR): FP-default
+    verifier prompt (TP/FP semantics), CWE-94→78 OS-command fix, finding de-dup, class-specific CVSS.
+    Proven on DVWA shapes (safe→FP, unsafe→TP). Curated Tier-2 = 1.000 but trivial (detector flags 0 safe
+    cases, so FP-suppression unexercised — see scorecard W4 caveat).
+  - **W5 — enrichment quality + device-tier config** ✅ (branch `week5-enrichment-tiers`):
+    enrichment **parse-rate 1.00 (10/10)** on a fixed 10-finding set via the live 7B (W1 baseline 0.34);
+    `server/scanner/rag/model_tiers.py` maps `MODEL_TIER` low/mid/high → 1.5B/7B/14B GGUF (tested-but-
+    unwired; only 7B staged locally). Caveat: 3 eval/CWE-95 findings get a title mislabeled "OS Command
+    Injection" (number correct, body correct) — candidate prompt fix, not applied (measurement week).
+  - **Open / carried to later weeks:** fusion high-sev-FP policy (keep `needs_review[verifier:FP]` vs
+    suppress) → **W8**; grow curated with real detector-FP cases + `run_eval.py --tier verifier` → **W8**;
+    the W5 enrichment title-mislabel one-line prompt fix; PR strategy for the stacked W2→W4→W5 branches
+    (nothing merges to frozen prod). **Production `lsast-handoff-2026-05-31` is LIVE on Railway — do NOT
+    push to it without explicit OK; it runs the legacy FIM path (`LLM_MODEL_MODE` unset).**
+
+- **Historical — W1 (2026-06-10):** Environment reconstituted (repo from bundle,
   `server/.venv` built). W1 delivered both tasks:
   - **1.1 — characterization lock** pins the detector→normalize→derive_cwe output on a fixed fixture
     (`server/scanner/tests/fixtures/characterization/{app.py,Dockerfile}`) via
@@ -56,11 +80,15 @@ before acting (full developer onboarding: `docs/handoff/onboarding.md`). This fi
 - **OpenGrep ≠ Semgrep** in three ways the code now handles: it rejects `--metrics`; it needs a UTF-8
   locale (`PYTHONUTF8`/`LC_ALL=C.UTF-8`) or it crashes on rule files; and its `dataflow_trace` JSON is an
   OCaml tagged-tuple `["CliLoc",[loc,code]]`, not a list of dicts. See `semgrep_detector.py`.
-- **The bundled LLM is weak.** `astra.gguf` is a **Qwen2.5-Coder-3B fill-in-the-middle (FIM)** model, not
-  instruction-tuned: the verifier can't emit `FP` (rubber-stamps `TP`) and the report enricher only parses
-  ~34% of the time (rest fail-open). Both are model-bound — the fix is the **instruction-tuned model swap**
-  in `docs/instruction-tuned-model-swap-scope.md`. **⚠️ That same 3B is under a NON-COMMERCIAL license —
-  see §9.1; treat moving off it as urgent.**
+- **The LLM was weak; FIXED in Phase 1 (W2–W5).** The original `astra.gguf` was a **Qwen2.5-Coder-3B
+  fill-in-the-middle (FIM)** model under a **NON-COMMERCIAL license** — it couldn't emit `FP` (rubber-
+  stamped `TP`) and the enricher parsed only ~34%. Replaced by **Qwen2.5-Coder-7B-Instruct Q4_K_M
+  (Apache-2.0)** behind `LLM_MODEL_MODE=instruct`; with the W4 verifier-prompt fix it discriminates
+  TP/FP, and W5 enrichment parses 10/10. The local server lives in `astra-model-host/` (sibling of
+  `yacm/`, not inside it): `astra-model-host\model\astra-Q4_K_M.gguf` is the 7B; serve with
+  `.\bin\llama-server.exe --model .\model\astra-Q4_K_M.gguf --host 127.0.0.1 --port 8001 --ctx-size 8192
+  --api-key <key> --alias astra-code-reviewer --jinja`. **Default (no `LLM_MODEL_MODE`) is still the FIM
+  path** — frozen prod runs it.
 - **Finding fields:** `title` = Semgrep rule name (e.g. `sequelize-raw-query`); `description`/`security_risk`
   = Semgrep message (or LLM-authored if enrichment succeeded); `mitigation` = LLM remediation or empty.
   `cwe`/`severity`/`file_path` are **deterministic** — never let the LLM author them.
@@ -86,32 +114,31 @@ and `code/<path>` overlay from the handoff package are therefore no longer neede
 work — while #1 (model license) is the urgent compliance item. The 12-week roadmap (see **Current roadmap
 position** above) sequences this work starting at Week 1.
 
-## Next-week brief — Week 2: License-safe model behind a flag
+## Next-week brief — Week 6: Parallelize verifier + reporter calls (Phase 2 start)
 
-**Goal:** an Apache-licensed instruction-tuned model converts to GGUF, is selectable behind a flag, loads,
-and serves — with legacy (FIM) behavior unchanged when the flag is off. **Milestone: compliance blocker
-resolved.** Plan: `docs/superpowers/plans/2026-05-31-codesense-12week-roadmap-phase1.md` (Week 2). Acceptance:
-with `LLM_MODEL_MODE=instruct` + the instruct GGUF, a chat round-trip integration test passes; with the
-default (`fim`), `test_semgrep_detector`/verifier tests are unchanged.
+**Goal:** cut scan wall-time by parallelizing the per-finding LLM calls (verify + enrich) in
+`server/scanner/rag/lsast_scanner.py` with **bounded** concurrency, producing **identical findings** to the
+serial path. **Acceptance:** DVB (or a fixed corpus) wall-time ↓ ≥40% vs the W1 reference; finding set
+byte-identical to serial. Plan: `docs/superpowers/plans/2026-05-31-codesense-12week-roadmap-phase2.md` (Week 6).
 
-**Tasks (TDD, exact files in the plan):**
-1. **2.1 — add the flag (no behavior change):** add `model_mode()` to `server/scanner/rag/llm.py`
-   (`"instruct"` iff `LLM_MODEL_MODE=instruct`, else `"fim"`); test `server/scanner/tests/test_llm_mode.py`.
-   This is the only code change that lands in the repo this week — it must be a true no-op for the FIM path.
-2. **2.2 — convert + verify the GGUF (build-host task):** `Qwen/Qwen2.5-Coder-7B-Instruct` (Apache-2.0) →
-   GGUF Q4_K_M via `scripts/offline_ai/convert_model_to_gguf.sh`; confirm `llama-server` serves it and
-   `/v1/models` returns the id. Document in `scripts/offline_ai/README-model-swap.md` (per-tier variants:
-   1.5B Q5_K_M / 7B Q4_K_M / 14B Q4_K_M; build stages the chosen GGUF as `resources/model/astra.gguf`).
-3. **2.3 — gated round-trip test:** `server/scanner/tests/test_llm_integration.py`, skipped unless
-   `LLM_LIVE_TEST=1` with a running server.
+**Tasks (TDD):**
+1. **6.1 — bounded-concurrency executor** over the per-finding loop (lines ~56–112 of `lsast_scanner.py`):
+   `verify()` + `generate_report()` run concurrently across findings with a small worker cap (the local
+   `llama-server` serializes anyway — cap to its slot count, env-tunable). Persist/progress stay correct
+   under concurrency (currently incremental `save_findings_to_db` + `update_progress` inside the loop).
+2. **6.2 — order/identity test:** results must equal the serial pipeline regardless of completion order
+   (sort before compare); a test asserts the same visible/filtered partition and field values.
+3. **6.3 — measure** wall-time before/after on a fixed corpus; record "W6 — scan wall-time" + per-finding
+   LLM latency in `metrics/scorecard.md` (the W1 540s p50 + `N/A` latency rows).
 
-**Windows / this-environment notes for W2:**
-- The model is **not staged locally** and there is no GPU build host here, so 2.2 (HF download + GGUF
-  convert, networked) and the live 2.3 round-trip will be **deferred/documented** — land 2.1 (the flag, fully
-  testable offline) + 2.2's docs/script, and write the gated 2.3 test (skips without `LLM_LIVE_TEST=1`).
-  Carry the live-serve verification + the `instruct` baseline into W3/W4 when a server is available.
-- Use `server\.venv\Scripts\python.exe manage.py test scanner` (Windows venv). For any eval/script that
-  prints to the console, set `PYTHONUTF8=1` (cp1252 chokes on the harness's ✅/❌/em-dash output).
-- Keep the **characterization snapshot green** — W2 must not touch the detector; if `test_characterization`
-  changes, something regressed.
-- The pre-existing `scripts/eval/tests/test_owasp.py` POSIX-path failure is still open (out of W2 scope).
+**Environment notes (carry forward):**
+- Local model server is in **`astra-model-host/`** (sibling of `yacm/`): start it first (see the LLM note
+  above); it's CPU-only and serializes requests, so "concurrency" mostly overlaps detector/normalize work
+  with in-flight LLM calls — measure honestly, don't claim 40% if the bottleneck is the single CPU slot.
+- Tests: `server\.venv\Scripts\python.exe manage.py test scanner` with `PYTHONUTF8=1` +
+  `SEMGREP_BIN`/`SEMGREP_RULES_DIR` = `yacm\dist\tools\windows\semgrep.exe` / `yacm\dist\semgrep-rules`.
+  Suite is **132 pass / 2 skip**; keep the **characterization snapshot green** (W6 must not touch the detector).
+- `.env` `load_dotenv` is `override=False` — a stray shell `VLLM_BASE_URL` wins; use a clean shell.
+- Branch: cut W6 off `week5-enrichment-tiers` (it has the full Phase-1 stack). **Do NOT push to frozen
+  production `lsast-handoff-2026-05-31` without explicit OK.**
+- Still open (pre-existing): `scripts/eval/tests/test_owasp.py` POSIX-path failure (out of scope).

@@ -132,3 +132,55 @@ First measurement with a working verifier: the W2 Apache-2.0 instruct model
 - The substantive W4.1 win is qualitative + A/B-proven: the verifier now emits `FP` on safe
   code (PDO-prepared, constants) where the FIM model could not. A statistically meaningful
   FP-suppression headline needs a curated set with genuine detector false positives.
+
+## Week 5 (Enrichment quality + device-tier config) — 2026-06-23
+
+First measurement of enrichment parse-rate with the working instruct model (the W1
+baseline 0.34 was the dead FIM 3B, never re-measurable since it failed open). Branch
+`week5-enrichment-tiers`.
+
+| Metric | W1 baseline | W5 | Target |
+|---|---|---|---|
+| Enrichment parse-rate | 0.34 (FIM garbled JSON) | **1.00** (10/10 non-None reports) | > 0.80 |
+| Enrichment CWE-field integrity | — | **10/10** (no contradictory CWE in prose) | — |
+| Enrichment title-phrase correct | — | **7/10** (3 eval cases mislabel title, see caveat) | — |
+
+### Provenance & caveats
+
+- **Set: a FIXED 10-finding set** built by the throwaway harness
+  `scripts/eval/_w5_enrich_harness.py` (deleted after use, per the W5 brief). It writes a
+  small fixture of well-known vulnerabilities (SQLi, OS-command-injection, eval/code-injection,
+  pickle, weak-MD5, subprocess-shell, Dockerfile issues, across python/js/php), scans it with
+  the **real detector** (OpenGrep + staged `dist/semgrep-rules`) in a temp dir outside the git
+  tree (the OpenGrep zero-file walker bug), de-dupes, sorts by `(file, line, rule_id)` for
+  reproducibility, and takes the first 10. **N = 10.**
+- **Model: live instruct 7B** — Qwen2.5-Coder-7B-Instruct Q4_K_M served at `127.0.0.1:8001`
+  (`LLM_MODEL_MODE=instruct`), the same Apache-2.0 model from W2/W4. CPU build.
+- **Parse-rate = 1.00 (10/10).** Every finding received a non-None `FindingReport` with usable
+  prose — a clean pass of the > 0.80 acceptance and a decisive jump from the FIM 0.34.
+- **CWE-field integrity = 10/10.** CWE/severity/location stay deterministic (never LLM-authored);
+  the harness also scans the authored prose for any `CWE-####` token that contradicts the
+  finding's CWE — **0 contradictions**. The descriptions/impact/remediation accurately describe
+  the correct vulnerability class in all 10.
+- ⚠️ **Title-phrase caveat (7/10).** The 3 eval/code-injection findings (CWE-95) received an
+  LLM-authored `name` that keeps the correct **number** (`CWE-95`) but pairs it with CWE-78's
+  canonical phrase *"…OS Command Injection"*. The CWE field is untouched and the body prose is
+  correct ("uses eval → arbitrary code execution"); only the title's canonical wording is wrong.
+  A model artifact (the 7B over-elaborates titles with canonical CWE names and grabs the wrong
+  one for eval). Candidate one-line prompt fix for a later pass — *do not embed a CWE id or its
+  canonical name in the title* — deliberately not applied here (W5.2 is measurement; mirrors the
+  W4 decision not to overfit the prompt). Headline acceptance (parse-rate) is met regardless.
+
+### Device-tier model config (W5.1)
+
+- `server/scanner/rag/model_tiers.py` — `gguf_filename_for_tier()` maps `low/mid/high` →
+  `astra-1.5B.gguf / astra-7B.gguf / astra-14B.gguf` (unknown/empty → mid); `model_tier()` reads
+  `MODEL_TIER` (default mid). 10 unit tests (`test_model_tiers.py`). **Tested-but-unwired**: the
+  Tauri launcher (`main.rs`) and build scripts still stage a fixed `astra.gguf`, so this is a
+  no-op until a build host threads a tier through deliberately. Only the **7B (mid)** is staged
+  locally; 1.5B/14B are a build-host task, deferred.
+
+### Status vs acceptance (W5)
+
+- Enrichment parse-rate **PASS** (1.00 > 0.80). **Milestone: LLM quality fixed.**
+- Device-tier resolution: ≥2 tiers resolve to the right GGUF filename (all 3 + default tested).
