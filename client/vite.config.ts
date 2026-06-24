@@ -8,11 +8,9 @@ import { tanstackRouter } from '@tanstack/router-plugin/vite'
 export default defineConfig({
   server: {
     host: true,
-    port: 8282
   },
   preview: {
     host: true,
-    port: 8283
   },
   plugins: [
     tanstackRouter({

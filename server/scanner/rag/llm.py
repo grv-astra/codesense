@@ -25,6 +25,16 @@ _STOP_TOKENS = [
 _CHARS_PER_TOKEN = 3.5
 
 
+def model_mode() -> str:
+    """Which model family the client is talking to, read at call time.
+
+    'instruct' (instruction-tuned, JSON-following) iff LLM_MODEL_MODE=instruct,
+    else 'fim' (legacy fill-in-the-middle model). The default is 'fim' so the
+    legacy path is a true no-op until the flag is explicitly flipped.
+    """
+    return "instruct" if os.getenv("LLM_MODEL_MODE", "fim").lower() == "instruct" else "fim"
+
+
 def _normalize_base_url(base_url: str) -> str:
     base = (base_url or "").strip().rstrip("/")
     if not base:
@@ -143,6 +153,11 @@ class VLLMClient:
         if not content:
             return ""
 
+        # Instruct models follow the prompt and return clean text/JSON — the FIM
+        # echo/repeat hunting below would corrupt valid output, so pass through.
+        if model_mode() == "instruct":
+            return content.strip()
+
         content = content.strip()
 
         # ── 1. Cut at known FIM / repetition stop markers ──────────────
@@ -216,18 +231,37 @@ class VLLMClient:
             available = self.max_model_len - self._estimate_tokens(prompt) - self._overhead
             safe_max = max(32, min(override, available))
 
+        is_instruct = model_mode() == "instruct"
+
         for attempt in range(self.retry_attempts):
             try:
+                messages = []
+                if is_instruct:
+                    # Instruct models take a system prompt and follow JSON
+                    # instructions; the FIM model below ignores / mishandles it.
+                    messages.append({
+                        "role": "system",
+                        "content": "You are a security analysis assistant. "
+                                   "Respond with only valid JSON.",
+                    })
+                messages.append({"role": "user", "content": prompt})
+
                 body = {
                     "model":       self.model,
                     "temperature": self.temperature,
                     "max_tokens":  safe_max,
-                    "stop":        _STOP_TOKENS,   # ← tell the server to stop at repeat markers
-                    # NO system prompt — this FIM model ignores / mishandles it
-                    "messages": [
-                        {"role": "user", "content": prompt},
-                    ],
+                    "messages":    messages,
                 }
+                if is_instruct:
+                    # Honour a caller-supplied structured-output format (e.g. the
+                    # verifier/enricher request a JSON object). Omitted otherwise.
+                    rf = payload.get("response_format")
+                    if rf:
+                        body["response_format"] = rf
+                else:
+                    # FIM path unchanged: stop at the known repeat markers, no
+                    # system prompt, no response_format.
+                    body["stop"] = _STOP_TOKENS
 
                 response = requests.post(
                     f"{self.base_url}/chat/completions",

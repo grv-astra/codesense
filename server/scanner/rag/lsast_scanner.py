@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 
 from scanner.rag.database import save_findings_to_db
-from scanner.rag.finding_normalizer import normalize
+from scanner.rag.finding_normalizer import dedupe_findings, normalize
 from scanner.rag.fusion import fuse
 from scanner.rag.languages import language_for_path
 from scanner.rag.llm import llm_health
@@ -30,6 +30,13 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str
     if not sem_findings:
         logger.info("LSAST: Semgrep produced no findings for %s", folder_path)
         return [], []
+
+    # Collapse duplicate findings (same file/line/CWE flagged by overlapping
+    # rules) before the expensive per-finding verify/enrich/persist loop.
+    raw_count = len(sem_findings)
+    sem_findings = dedupe_findings(sem_findings)
+    if len(sem_findings) != raw_count:
+        logger.info("LSAST: de-duplicated %d -> %d findings", raw_count, len(sem_findings))
 
     # One up-front check: can the LLM actually do inference (valid API key)?
     # If not, we keep every deterministic finding but skip the per-finding AI

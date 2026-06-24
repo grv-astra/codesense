@@ -6,18 +6,132 @@ the UI keep working unchanged.
 """
 from __future__ import annotations
 
+import math
 import re
 import uuid
 from datetime import datetime, timezone
 
 from scanner.rag.lsast_types import DataflowContext, SemgrepFinding
 
-_CVSS_BY_SEVERITY = {
-    "critical": ("9.8", "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"),
-    "high":     ("8.8", "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"),
-    "medium":   ("6.5", "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:L/I:L/A:L"),
-    "low":      ("3.1", "CVSS:3.1/AV:L/AC:H/PR:L/UI:R/S:U/C:L/I:N/A:N"),
+# --- CVSS v3.1 base-score derivation ---------------------------------------
+# Previously CVSS was a flat per-severity lookup, so every "high" finding read
+# 8.8 (79/86 of a DVWA scan) regardless of vulnerability class. We instead pick
+# the CWE's characteristic metric vector and COMPUTE the base score from it, so
+# an SQLi (9.8) and a reflected XSS (6.1) — both "high" — get meaningfully
+# different, internally-consistent scores. CVSS stays fully deterministic.
+_AV = {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.20}
+_AC = {"L": 0.77, "H": 0.44}
+_UI = {"N": 0.85, "R": 0.62}
+_CIA = {"H": 0.56, "L": 0.22, "N": 0.0}
+_PR_UNCHANGED = {"N": 0.85, "L": 0.62, "H": 0.27}
+_PR_CHANGED = {"N": 0.85, "L": 0.68, "H": 0.50}
+
+_METRIC_ORDER = ("AV", "AC", "PR", "UI", "S", "C", "I", "A")
+
+
+def _m(av, ac, pr, ui, s, c, i, a) -> dict[str, str]:
+    return dict(zip(_METRIC_ORDER, (av, ac, pr, ui, s, c, i, a)))
+
+
+def _roundup(x: float) -> float:
+    """CVSS 3.1 roundup: smallest one-decimal number >= x (to 5 dp tolerance)."""
+    i = int(round(x * 100000))
+    if i % 10000 == 0:
+        return i / 100000.0
+    return (math.floor(i / 10000) + 1) / 10.0
+
+
+def _cvss_base_score(m: dict[str, str]) -> float:
+    """CVSS v3.1 base score from a parsed metric dict."""
+    changed = m["S"] == "C"
+    pr = (_PR_CHANGED if changed else _PR_UNCHANGED)[m["PR"]]
+    iss = 1 - (1 - _CIA[m["C"]]) * (1 - _CIA[m["I"]]) * (1 - _CIA[m["A"]])
+    if changed:
+        impact = 7.52 * (iss - 0.029) - 3.25 * (iss * 0.9731 - 0.02) ** 13
+    else:
+        impact = 6.42 * iss
+    exploitability = 8.22 * _AV[m["AV"]] * _AC[m["AC"]] * pr * _UI[m["UI"]]
+    if impact <= 0:
+        return 0.0
+    raw = 1.08 * (impact + exploitability) if changed else (impact + exploitability)
+    return _roundup(min(raw, 10.0))
+
+
+def _vector(m: dict[str, str]) -> str:
+    return "CVSS:3.1/" + "/".join(f"{k}:{m[k]}" for k in _METRIC_ORDER)
+
+
+def _parse_vector(vector: str) -> dict[str, str]:
+    return dict(part.split(":", 1) for part in vector.split("/")[1:])
+
+
+# CWE -> characteristic CVSS 3.1 metric vector. Coarse but class-appropriate;
+# the score is computed (never hand-typed) so vector and score never drift.
+_CVSS_METRICS_BY_CWE: dict[str, dict[str, str]] = {
+    "CWE-89":   _m("N", "L", "N", "N", "U", "H", "H", "H"),  # SQLi            9.8
+    "CWE-78":   _m("N", "L", "N", "N", "U", "H", "H", "H"),  # OS command inj  9.8
+    "CWE-94":   _m("N", "L", "N", "N", "U", "H", "H", "H"),  # code injection  9.8
+    "CWE-95":   _m("N", "L", "N", "N", "U", "H", "H", "H"),  # eval injection  9.8
+    "CWE-90":   _m("N", "L", "N", "N", "U", "H", "H", "H"),  # LDAP injection  9.8
+    "CWE-502":  _m("N", "L", "N", "N", "U", "H", "H", "H"),  # deserialization 9.8
+    "CWE-74":   _m("N", "L", "N", "N", "U", "H", "H", "H"),  # generic inject  9.8
+    "CWE-79":   _m("N", "L", "N", "R", "C", "L", "L", "N"),  # XSS             6.1
+    "CWE-22":   _m("N", "L", "N", "N", "U", "H", "N", "N"),  # path traversal  7.5
+    "CWE-352":  _m("N", "L", "N", "R", "U", "H", "H", "H"),  # CSRF            8.8
+    "CWE-918":  _m("N", "L", "N", "N", "U", "H", "H", "N"),  # SSRF            9.1
+    "CWE-611":  _m("N", "L", "N", "N", "U", "H", "N", "N"),  # XXE             7.5
+    "CWE-601":  _m("N", "L", "N", "R", "C", "L", "L", "N"),  # open redirect   6.1
+    "CWE-798":  _m("N", "L", "N", "N", "U", "H", "N", "N"),  # hardcoded creds 7.5
+    "CWE-327":  _m("N", "H", "N", "N", "U", "H", "N", "N"),  # weak crypto     5.9
+    "CWE-328":  _m("N", "H", "N", "N", "U", "H", "N", "N"),  # weak hash       5.9
+    "CWE-330":  _m("N", "H", "N", "N", "U", "L", "L", "N"),  # insecure random 4.8
+    "CWE-295":  _m("N", "H", "N", "N", "U", "H", "H", "N"),  # cert validation 7.4
+    "CWE-1321": _m("N", "L", "N", "N", "U", "L", "L", "L"),  # proto pollution 7.3
+    "CWE-1333": _m("N", "L", "N", "N", "U", "N", "N", "H"),  # ReDoS           7.5
+    "CWE-200":  _m("N", "L", "N", "N", "U", "H", "N", "N"),  # info exposure   7.5
 }
+
+# Fallback metric vectors when the CWE is unknown/unmapped — keyed by the
+# deterministic Semgrep severity. Still computed, so internally consistent.
+_CVSS_METRICS_BY_SEVERITY: dict[str, dict[str, str]] = {
+    "critical": _m("N", "L", "N", "N", "U", "H", "H", "H"),  # 9.8
+    "high":     _m("N", "L", "L", "N", "U", "H", "H", "H"),  # 8.8
+    "medium":   _m("N", "L", "L", "N", "U", "L", "L", "L"),  # 6.3
+    "low":      _m("N", "H", "N", "R", "U", "L", "N", "N"),  # 3.1
+}
+
+
+def derive_cvss(cwe: str, severity: str) -> tuple[str, str]:
+    """Return (score, vector). Class-specific by CWE; severity fallback otherwise."""
+    metrics = _CVSS_METRICS_BY_CWE.get((cwe or "").upper().strip())
+    if metrics is None:
+        metrics = _CVSS_METRICS_BY_SEVERITY.get(
+            (severity or "medium").lower(), _CVSS_METRICS_BY_SEVERITY["medium"])
+    return f"{_cvss_base_score(metrics):.1f}", _vector(metrics)
+
+
+def _dedup_rank(f: SemgrepFinding) -> tuple:
+    """Higher = keep. Richer dataflow / context wins when two rules collide."""
+    return (len(f.taint_trace or []), len(f.code_excerpt or ""),
+            1 if (f.fix or "").strip() else 0, len(f.references or []))
+
+
+def dedupe_findings(findings: list[SemgrepFinding]) -> list[SemgrepFinding]:
+    """Collapse findings that flag the SAME issue at the SAME location.
+
+    On DVWA ~23% of findings were one (file, line-range, CWE) flagged by two
+    overlapping rules. Keep the most informative one; preserve genuinely distinct
+    issues that share a line but differ in CWE. Order-stable (ties keep earlier)."""
+    best: dict[tuple, SemgrepFinding] = {}
+    order: list[tuple] = []
+    for f in findings:
+        key = (f.file_path, f.start_line, f.end_line, f.cwe)
+        if key not in best:
+            best[key] = f
+            order.append(key)
+        elif _dedup_rank(f) > _dedup_rank(best[key]):
+            best[key] = f
+    return [best[k] for k in order]
 
 
 def build_dataflow_context(f: SemgrepFinding) -> DataflowContext:
@@ -107,8 +221,7 @@ def _build_mitigation(f: SemgrepFinding, reference: str) -> str:
 
 def normalize(f: SemgrepFinding, scan_id: str, triggered_by: str) -> tuple[dict, DataflowContext]:
     """Return (legacy_finding_dict, dataflow_context). The dict matches extract.py's shape."""
-    cvss_score, cvss_vector = _CVSS_BY_SEVERITY.get(
-        f.severity, ("5.0", "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:L/I:L/A:N"))
+    cvss_score, cvss_vector = derive_cvss(f.cwe, f.severity)
     num = _cwe_number(f.cwe or "")
     reference = f"https://cwe.mitre.org/data/definitions/{num}.html" if num else "NA"
 

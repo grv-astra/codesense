@@ -2,7 +2,9 @@ import uuid
 
 from django.test import SimpleTestCase
 
-from scanner.rag.finding_normalizer import normalize, build_dataflow_context
+from scanner.rag.finding_normalizer import (
+    normalize, build_dataflow_context, dedupe_findings, derive_cvss,
+    _cvss_base_score, _parse_vector)
 from scanner.rag.lsast_types import SemgrepFinding
 
 
@@ -111,3 +113,78 @@ class NormalizeTests(SimpleTestCase):
         self.assertEqual(normalize(f, "s", "u")[0]["title"], "Some issue")
         f.message = ""
         self.assertEqual(normalize(f, "s", "u")[0]["title"], "Vulnerability")
+
+
+class DeriveCvssTests(SimpleTestCase):
+    """CVSS is derived from the CWE's characteristic vector, not a flat
+    per-severity constant (which made 79/86 DVWA findings identically 8.8)."""
+
+    def test_class_specific_not_flat_by_severity(self):
+        # SQLi and XSS are both "high" but must NOT share a CVSS score.
+        sqli_score, sqli_vec = derive_cvss("CWE-89", "high")
+        xss_score, xss_vec = derive_cvss("CWE-79", "high")
+        self.assertNotEqual(sqli_score, xss_score)
+        self.assertEqual(sqli_score, "9.8")     # network RCE-class impact
+        self.assertEqual(xss_score, "6.1")      # scope-changed, requires UI
+        self.assertTrue(sqli_vec.startswith("CVSS:3.1/"))
+
+    def test_command_injection_distinct_from_weak_crypto(self):
+        cmd, _ = derive_cvss("CWE-78", "high")
+        crypto, _ = derive_cvss("CWE-327", "high")
+        self.assertEqual(cmd, "9.8")
+        self.assertEqual(crypto, "5.9")
+
+    def test_unknown_cwe_falls_back_to_severity(self):
+        self.assertEqual(derive_cvss("CWE-Unknown", "low")[0], "3.1")
+        self.assertEqual(derive_cvss("", "critical")[0], "9.8")
+
+    def test_published_score_matches_its_own_vector(self):
+        # Guard against hand-typed score/vector mismatches: the published score is
+        # the CVSS 3.1 base score of the published vector.
+        for cwe in ("CWE-89", "CWE-79", "CWE-22", "CWE-78", "CWE-352",
+                    "CWE-918", "CWE-327", "CWE-330"):
+            score, vec = derive_cvss(cwe, "high")
+            recomputed = f"{_cvss_base_score(_parse_vector(vec)):.1f}"
+            self.assertEqual(score, recomputed, f"{cwe}: {vec}")
+
+    def test_normalize_uses_class_specific_cvss(self):
+        f = _sample_finding()           # CWE-89, high
+        d, _ = normalize(f, "s", "u")
+        self.assertEqual(d["cvss_score"], "9.8")
+        f.cwe = "CWE-79"
+        d, _ = normalize(f, "s", "u")
+        self.assertEqual(d["cvss_score"], "6.1")
+
+
+class DedupeFindingsTests(SimpleTestCase):
+    def _f(self, rule_id, line=12, cwe="CWE-89", trace=None, excerpt="x"):
+        return SemgrepFinding(
+            rule_id=rule_id, cwe=cwe, severity="high", message="m",
+            file_path="app/views.py", start_line=line, end_line=line + 1,
+            code_excerpt=excerpt, taint_trace=trace or [], sanitizers_observed=[])
+
+    def test_same_location_same_cwe_two_rules_collapses_to_one(self):
+        findings = [self._f("rule-a"), self._f("rule-b")]
+        out = dedupe_findings(findings)
+        self.assertEqual(len(out), 1)
+
+    def test_keeps_the_more_informative_finding(self):
+        sparse = self._f("rule-a", trace=[], excerpt="x")
+        rich = self._f("rule-b", trace=[(12, "src"), (13, "sink")], excerpt="much longer excerpt")
+        out = dedupe_findings([sparse, rich])
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0].rule_id, "rule-b")
+
+    def test_distinct_cwe_at_same_line_is_preserved(self):
+        out = dedupe_findings([self._f("rule-a", cwe="CWE-89"),
+                               self._f("rule-b", cwe="CWE-79")])
+        self.assertEqual(len(out), 2)
+
+    def test_distinct_locations_preserved(self):
+        out = dedupe_findings([self._f("r", line=12), self._f("r", line=40)])
+        self.assertEqual(len(out), 2)
+
+    def test_order_stable(self):
+        out = dedupe_findings([self._f("r", line=5), self._f("r", line=1),
+                               self._f("r", line=5)])
+        self.assertEqual([f.start_line for f in out], [5, 1])
