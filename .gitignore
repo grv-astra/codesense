@@ -4,3 +4,8 @@
 
 # Staged offline scanner tools / DBs / rules (dev-from-source; large, downloadable)
 dist/
+
+# Local dev tooling (not shipped / not version-controlled per maintainer choice)
+/start-dev.ps1
+/.claude/commands/
+/docs/security/
