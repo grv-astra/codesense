@@ -85,7 +85,7 @@ class ExportFindingView(APIView):
             # Headers
             headers = [
                 "Sr No", "Title", "CWE", "Severity", "CVSS Score",
-                "Code Snip", "Description", "File", "Reference", "Created At"
+                "Code Snip", "Description", "Mitigation", "File", "Reference", "Created At"
             ]
             ws.append(headers)
  
@@ -120,6 +120,7 @@ class ExportFindingView(APIView):
                     f.get("cvss_score", ""),
                     f.get("code_snip", ""),
                     f.get("description", ""),
+                    f.get("mitigation", ""),
                     f.get("file_path", ""),
                     f.get("reference", ""),
                     created_at_str
