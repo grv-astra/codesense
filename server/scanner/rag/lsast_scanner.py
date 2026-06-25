@@ -8,6 +8,8 @@ surface is unchanged.
 from __future__ import annotations
 
 import logging
+import os
+from concurrent.futures import ThreadPoolExecutor
 
 from scanner.rag.database import save_findings_to_db
 from scanner.rag.finding_normalizer import dedupe_findings, normalize
@@ -21,6 +23,77 @@ from scanner.rag.report_enricher import apply_report, generate_report
 from scanner.rag.semgrep_detector import run_semgrep
 
 logger = logging.getLogger(__name__)
+
+
+def _max_workers() -> int:
+    """Bounded concurrency for the per-finding LLM work (W6).
+
+    Defaults to 4. The local CPU-only ``llama-server`` serializes inference, so
+    the win is overlapping detector/normalize/JSON-parse work with in-flight LLM
+    calls rather than true parallel inference — keep the cap small and env-tunable
+    (``LSAST_MAX_WORKERS``) so a multi-slot host can raise it. ``1`` forces the
+    legacy serial path.
+    """
+    try:
+        return max(1, int(os.getenv("LSAST_MAX_WORKERS", "4")))
+    except (ValueError, TypeError):
+        return 4
+
+
+def _process_one(sf, scan_id: str, triggered_by: str, llm_ok: bool = True):
+    """Run normalize → verify → fuse → (enrich) for ONE finding.
+
+    Pure compute + LLM I/O only — NO DB writes or progress updates, so it is safe
+    to run concurrently in a thread pool. Returns the ``FusionOutcome`` (with the
+    enriched finding dict) or ``None`` if this single finding hit an error, so one
+    malformed finding can't sink the batch. Honours the fail-open path: when the
+    LLM is unavailable the verifier/reporter calls are skipped and the finding is
+    preserved as a low-confidence TP for human review.
+    """
+    try:
+        finding_dict, dataflow = normalize(sf, scan_id=scan_id, triggered_by=triggered_by)
+        if llm_ok:
+            verdict = verify(
+                cwe=sf.cwe,
+                language=language_for_path(sf.file_path).name,
+                dataflow=dataflow,
+                code_excerpt=sf.code_excerpt,
+            )
+        else:
+            # Fail-open verdict (same shape the verifier uses) so the finding
+            # is preserved for human review instead of dropped.
+            verdict = VerifierVerdict(
+                verdict="TP",
+                reason="LLM unavailable; preserved for review",
+                confidence=0.3,
+            )
+        outcome = fuse(finding_dict, verdict)
+    except Exception as exc:  # one malformed finding must not sink the batch
+        logger.warning(
+            "LSAST: skipping finding %s — processing error: %s",
+            getattr(sf, "rule_id", "?"), exc,
+        )
+        return None
+
+    # Reporting pass: a second, separate LLM call authors the human-facing
+    # fields (name / description / impact / remediation). Fail-open — it leaves
+    # the deterministic Semgrep-derived fields (rule-name title, message)
+    # untouched if the model can't produce a usable report, and never touches
+    # CWE / severity / location. Skipped for suppressed findings and when the
+    # LLM is unavailable.
+    if outcome.action != "suppress" and llm_ok:
+        report = generate_report(
+            rule_name=outcome.finding.get("title", ""),   # the Semgrep rule name (pre-enrichment)
+            cwe=outcome.finding.get("cwe", ""),
+            language=language_for_path(sf.file_path).name,
+            file_path=sf.file_path,
+            line=sf.start_line,
+            dataflow=dataflow,
+            code_excerpt=sf.code_excerpt,
+            detector_note=sf.message,                     # anchor the LLM to the real issue
+        )
+        apply_report(outcome.finding, report)
+    return outcome
 
 
 def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str
@@ -53,63 +126,43 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str
     visible: list[dict] = []
     filtered: list[dict] = []
 
-    for sf in sem_findings:
-        try:
-            finding_dict, dataflow = normalize(sf, scan_id=scan_id, triggered_by=triggered_by)
-            if llm_ok:
-                verdict = verify(
-                    cwe=sf.cwe,
-                    language=language_for_path(sf.file_path).name,
-                    dataflow=dataflow,
-                    code_excerpt=sf.code_excerpt,
-                )
-            else:
-                # Fail-open verdict (same shape the verifier uses) so the finding
-                # is preserved for human review instead of dropped.
-                verdict = VerifierVerdict(
-                    verdict="TP",
-                    reason="LLM unavailable; preserved for review",
-                    confidence=0.3,
-                )
-            outcome = fuse(finding_dict, verdict)
-        except Exception as exc:  # one malformed finding must not sink the batch
-            logger.warning(
-                "LSAST: skipping finding %s — processing error: %s",
-                getattr(sf, "rule_id", "?"), exc,
-            )
+    # The per-finding LLM work (verify + enrich) is the wall-time bottleneck.
+    # Run it concurrently across findings with a small, bounded worker pool —
+    # the calls are IO-bound (the `requests` HTTP round-trip releases the GIL),
+    # so threads overlap them. `_process_one` does NO DB writes, so the pool is
+    # thread-safe; persistence + progress stay on this thread, below.
+    #
+    # `ex.map` preserves input order, so the visible/filtered partition is
+    # identical to the serial path regardless of completion order. A single
+    # worker (LSAST_MAX_WORKERS=1) or a single finding takes the serial branch.
+    workers = _max_workers()
+    if workers > 1 and len(sem_findings) > 1:
+        with ThreadPoolExecutor(max_workers=workers,
+                                thread_name_prefix="lsast") as ex:
+            outcomes = list(ex.map(
+                lambda sf: _process_one(sf, scan_id, triggered_by, llm_ok),
+                sem_findings))
+    else:
+        outcomes = [_process_one(sf, scan_id, triggered_by, llm_ok)
+                    for sf in sem_findings]
+
+    # Partition + persist serially, in detector order, on this thread. Keeping
+    # save/progress out of the pool avoids cross-thread DB sessions and keeps the
+    # incremental "findings appear live" semantics (count grows as we persist).
+    for outcome in outcomes:
+        if outcome is None:                 # this finding errored in _process_one
             continue
         if outcome.action == "suppress":
             filtered.append(outcome.finding)
             continue
-
-        # Reporting pass: a second, separate LLM call authors the human-facing
-        # fields (name / description / impact / remediation). Fail-open — it
-        # leaves the deterministic Semgrep-derived fields (rule-name title,
-        # message) untouched if the model can't produce a usable report, and
-        # never touches CWE / severity / location.
-        if llm_ok:
-            report = generate_report(
-                rule_name=outcome.finding.get("title", ""),   # the Semgrep rule name (pre-enrichment)
-                cwe=outcome.finding.get("cwe", ""),
-                language=language_for_path(sf.file_path).name,
-                file_path=sf.file_path,
-                line=sf.start_line,
-                dataflow=dataflow,
-                code_excerpt=sf.code_excerpt,
-                detector_note=sf.message,                     # anchor the LLM to the real issue
-            )
-            apply_report(outcome.finding, report)
         visible.append(outcome.finding)
 
-        # Persist + publish progress incrementally so the UI sees findings appear
-        # live during the scan, rather than all-at-once when it finishes. A
-        # persistence hiccup on one finding must not sink the whole scan.
+        # A persistence hiccup on one finding must not sink the whole scan.
         try:
             save_findings_to_db([outcome.finding])
             update_progress(scan_id, findings=len(visible))
         except Exception as exc:  # noqa: BLE001
-            logger.warning("LSAST: incremental persist failed for %s: %s",
-                           getattr(sf, "rule_id", "?"), exc)
+            logger.warning("LSAST: incremental persist failed: %s", exc)
 
     logger.info(
         "LSAST done: %d Semgrep → %d visible (%d needs_review) + %d filtered",
