@@ -9,9 +9,16 @@ before acting (full developer onboarding: `docs/handoff/onboarding.md`). This fi
   (index) with the design spec in `docs/superpowers/specs/2026-05-31-codesense-12week-roadmap-design.md`
   and per-phase plans (`...-phase1/2/3.md`) alongside the README. Execution model: one session per week,
   context reset between; each week ends with its acceptance test green + docs updated + next-week brief.
-- **Position: PHASE 1 COMPLETE (W1–W5, 2026-06-23). Pre-Phase-2 (W6).** Milestone "LLM quality fixed"
-  reached. Branch `week5-enrichment-tiers` (off `week4-verifier-accuracy`, committed locally, NOT pushed).
-  Scanner suite **132 pass / 2 skip**; characterization snapshot green throughout. Phase 1 summary:
+- **Position: PHASE 2 BACKEND DONE (W6–W8, 2026-06-25), on branch `week6` (off production tip
+  `72b2de5`, committed locally, NOT pushed).** Batch A complete: W6 parallelized the per-finding
+  LLM work (bounded `ThreadPoolExecutor`, `LSAST_MAX_WORKERS`, identical findings — wall-time
+  ≥40% **pending a live model host**, CPU-serialized 7B caps real speedup); W7 persists + exposes
+  `rule_id`/`confidence`/`verifier_reason` (migration `0002`); W8 added the detector-recall CI gate
+  (`.github/workflows/lsast-eval-gate.yml`) + grew curated to **5 languages** (added go/php/ruby,
+  10 cases, F1/recall 1.000, FP 0.000). Suite **scanner+api_app 164 pass / 2 skip + 5 curated eval
+  tests**; characterization snapshot green. See `metrics/scorecard.md` W6/W7/W8. **Next: Phase 3 / W9.**
+- **Phase 1 (W1–W5, COMPLETE 2026-06-23)** — milestone "LLM quality fixed". Branch
+  `week5-enrichment-tiers`, **merged into production `72b2de5`** this cycle. Phase 1 summary:
   - **W2 — license-safe instruct model** ✅ (branch `week2-instruct-model`, pushed, no PR): `model_mode()`
     flag (`LLM_MODEL_MODE=instruct`); the bundled GGUF is now **Qwen2.5-Coder-7B-Instruct Q4_K_M
     (Apache-2.0)** — non-commercial-license blocker RESOLVED. FIM path byte-for-byte unchanged when the
@@ -114,31 +121,51 @@ and `code/<path>` overlay from the handoff package are therefore no longer neede
 work — while #1 (model license) is the urgent compliance item. The 12-week roadmap (see **Current roadmap
 position** above) sequences this work starting at Week 1.
 
-## Next-week brief — Week 6: Parallelize verifier + reporter calls (Phase 2 start)
+## Phase 2 (W6–W8) — DONE on branch `week6` (committed locally, NOT pushed)
 
-**Goal:** cut scan wall-time by parallelizing the per-finding LLM calls (verify + enrich) in
-`server/scanner/rag/lsast_scanner.py` with **bounded** concurrency, producing **identical findings** to the
-serial path. **Acceptance:** DVB (or a fixed corpus) wall-time ↓ ≥40% vs the W1 reference; finding set
-byte-identical to serial. Plan: `docs/superpowers/plans/2026-05-31-codesense-12week-roadmap-phase2.md` (Week 6).
+- **W6 — parallelize verifier+reporter** ✅ `_process_one()` (normalize→verify→fuse→enrich, no DB I/O)
+  runs across findings in a bounded `ThreadPoolExecutor` capped by `LSAST_MAX_WORKERS` (default 4; 1 =
+  serial). `ex.map` preserves order; persist/progress stay on the main thread → finding set identical to
+  serial (unit-proven over all 4 fuse branches + a `Barrier(3)` overlap test). **Wall-time ≥40% is PENDING
+  a live model host** — the local 7B is CPU-only and serializes inference (~40s/call), so real speedup is
+  capped at the single CPU slot; measure on the infra box, don't claim 40% locally (scorecard W6).
+- **W7 — persist + expose verdict metadata** ✅ `rule_id`/`confidence`/`verifier_reason` were dropped by
+  `FindingModel._FIELDS`; now persisted via migration `0002` (3 nullable/blank cols, back-compat) +
+  returned by `FindingModel.serialize` (the findings API). `normalize()` sets `rule_id`; `fuse()` writes
+  the verdict pair. DB round-trip tested.
+- **W8 — eval CI gate + grow curated** ✅ `.github/workflows/lsast-eval-gate.yml` runs
+  `run_eval.py --dataset curated --tier detector --gate` (exits non-zero below §9 thresholds). Curated
+  grown 2→**5 languages** (added go cmd-inj, php/ruby SQLi; 10 cases, F1/recall 1.000, FP 0.000). Gate
+  regression proven locally (empty rules dir → recall 0 → exit 1). **CI not yet run on a GitHub runner**
+  (real Semgrep + upstream rules vs local OpenGrep + bundled rules — fidelity caveat in the workflow).
+
+Suite: **scanner+api_app 164 pass / 2 skip** + 5 curated eval tests; characterization snapshot green.
+
+## Next-week brief — Week 9: Language-coverage expansion (Phase 3 start)
+
+**Goal:** add ≥4 top-40 languages end-to-end (registry routing + bundled rules + per-language eval), with
+explicit "no analyzer coverage" reporting for routing-only langs. **Acceptance:** `language_for_path` resolves
+new extensions to the right `Language`/coverage tier; per-language detector eval runs; registry stays
+well-formed (unique extensions). Plan: `docs/superpowers/plans/...-phase3.md` (Week 9, ~line 18).
 
 **Tasks (TDD):**
-1. **6.1 — bounded-concurrency executor** over the per-finding loop (lines ~56–112 of `lsast_scanner.py`):
-   `verify()` + `generate_report()` run concurrently across findings with a small worker cap (the local
-   `llama-server` serializes anyway — cap to its slot count, env-tunable). Persist/progress stay correct
-   under concurrency (currently incremental `save_findings_to_db` + `update_progress` inside the loop).
-2. **6.2 — order/identity test:** results must equal the serial pipeline regardless of completion order
-   (sort before compare); a test asserts the same visible/filtered partition and field values.
-3. **6.3 — measure** wall-time before/after on a fixed corpus; record "W6 — scan wall-time" + per-finding
-   LLM latency in `metrics/scorecard.md` (the W1 540s p50 + `N/A` latency rows).
+1. **9.1 — registry entries** in `server/scanner/rag/languages.py` (`LANGUAGES` list): add Go/Ruby/C#/Kotlin
+   (`Language("go", (".go",), "go", "strong")` shape). New test `server/scanner/tests/test_languages.py`:
+   extensions resolve, extensions are unique, coverage ∈ {strong,partial,none}.
+2. **9.2 — per-language detector eval + coverage report.** The W8 curated set already has go/php/ruby pairs
+   — extend per the new langs; run `run_eval.py --dataset curated --tier detector` and record per-language
+   recall in `metrics/scorecard.md` "W9".
 
 **Environment notes (carry forward):**
-- Local model server is in **`astra-model-host/`** (sibling of `yacm/`): start it first (see the LLM note
-  above); it's CPU-only and serializes requests, so "concurrency" mostly overlaps detector/normalize work
-  with in-flight LLM calls — measure honestly, don't claim 40% if the bottleneck is the single CPU slot.
+- Local model server is in **`astra-model-host/`** (sibling of `yacm/`), CPU-only/serializes; W9 is
+  detector/registry work and **does not need the model** (no LLM calls in the language/eval tier).
 - Tests: `server\.venv\Scripts\python.exe manage.py test scanner` with `PYTHONUTF8=1` +
   `SEMGREP_BIN`/`SEMGREP_RULES_DIR` = `yacm\dist\tools\windows\semgrep.exe` / `yacm\dist\semgrep-rules`.
-  Suite is **132 pass / 2 skip**; keep the **characterization snapshot green** (W6 must not touch the detector).
-- `.env` `load_dotenv` is `override=False` — a stray shell `VLLM_BASE_URL` wins; use a clean shell.
-- Branch: cut W6 off `week5-enrichment-tiers` (it has the full Phase-1 stack). **Do NOT push to frozen
-  production `lsast-handoff-2026-05-31` without explicit OK.**
+  Suite **164 pass / 2 skip**; keep the **characterization snapshot green**. Curated eval (no Django):
+  `cd scripts && ..\server\.venv\Scripts\python.exe -m unittest eval.tests.test_curated`.
+- ⚠️ **OpenGrep is slow (~85s/scan, rule-load bound)** — a full 10-case curated detector run is ~14 min;
+  per-file probing is the fast way to validate new fixtures before a full gate run.
+- Branch: continue on `week6` or cut `week9` off it. **Do NOT push to frozen production
+  `lsast-handoff-2026-05-31` without explicit OK.**
 - Still open (pre-existing): `scripts/eval/tests/test_owasp.py` POSIX-path failure (out of scope).
+- **W6 carry:** the ≥40% wall-time number is still owed — run it on the infra box once the 7B host is up.

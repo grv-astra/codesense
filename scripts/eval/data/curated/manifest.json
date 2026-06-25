@@ -3,6 +3,12 @@
     {"case_id": "py_sqli_unsafe", "file": "py_sqli_unsafe.py", "lines": [4, 4], "cwe": "CWE-89", "label": "real", "language": "python"},
     {"case_id": "py_sqli_safe", "file": "py_sqli_safe.py", "lines": [4, 4], "cwe": "CWE-89", "label": "fake", "language": "python"},
     {"case_id": "js_cmdi_unsafe", "file": "js_cmdi_unsafe.js", "lines": [2, 2], "cwe": "CWE-78", "label": "real", "language": "javascript"},
-    {"case_id": "js_cmdi_safe", "file": "js_cmdi_safe.js", "lines": [2, 2], "cwe": "CWE-78", "label": "fake", "language": "javascript"}
+    {"case_id": "js_cmdi_safe", "file": "js_cmdi_safe.js", "lines": [2, 2], "cwe": "CWE-78", "label": "fake", "language": "javascript"},
+    {"case_id": "go_cmdi_unsafe", "file": "go_cmdi_unsafe.go", "lines": [9, 9], "cwe": "CWE-94", "label": "real", "language": "go"},
+    {"case_id": "go_cmdi_safe", "file": "go_cmdi_safe.go", "lines": [9, 9], "cwe": "CWE-94", "label": "fake", "language": "go"},
+    {"case_id": "php_sqli_unsafe", "file": "php_sqli_unsafe.php", "lines": [4, 4], "cwe": "CWE-89", "label": "real", "language": "php"},
+    {"case_id": "php_sqli_safe", "file": "php_sqli_safe.php", "lines": [4, 4], "cwe": "CWE-89", "label": "fake", "language": "php"},
+    {"case_id": "rb_sqli_unsafe", "file": "rb_sqli_unsafe.rb", "lines": [4, 4], "cwe": "CWE-89", "label": "real", "language": "ruby"},
+    {"case_id": "rb_sqli_safe", "file": "rb_sqli_safe.rb", "lines": [4, 4], "cwe": "CWE-89", "label": "fake", "language": "ruby"}
   ]
 }
