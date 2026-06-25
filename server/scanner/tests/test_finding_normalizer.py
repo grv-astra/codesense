@@ -115,6 +115,24 @@ class NormalizeTests(SimpleTestCase):
         self.assertEqual(normalize(f, "s", "u")[0]["title"], "Vulnerability")
 
 
+class NormalizeVerdictFieldsTests(SimpleTestCase):
+    """W7 — the verifier's metadata + the Semgrep rule_id must survive into the
+    finding dict (and the persistence field filter) so the API can expose them."""
+
+    def test_normalize_sets_rule_id_and_verdict_defaults(self):
+        f = _sample_finding()
+        fd, _ = normalize(f, "s", "u")
+        self.assertEqual(fd["rule_id"], f.rule_id)
+        # defaults before fuse runs; fuse overwrites these for findings it judges
+        self.assertIsNone(fd["confidence"])
+        self.assertEqual(fd["verifier_reason"], "")
+
+    def test_new_fields_survive_the_persistence_filter(self):
+        from local.api_app.models.finding_models import _FIELDS
+        for k in ("rule_id", "confidence", "verifier_reason"):
+            self.assertIn(k, _FIELDS, f"{k} must be a persisted field")
+
+
 class DeriveCvssTests(SimpleTestCase):
     """CVSS is derived from the CWE's characteristic vector, not a flat
     per-severity constant (which made 79/86 DVWA findings identically 8.8)."""

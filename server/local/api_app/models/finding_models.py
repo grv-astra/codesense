@@ -6,6 +6,7 @@ _FIELDS = [
     "scan_id", "created_by", "cwe", "cvss_vector", "cvss_score", "code", "title",
     "description", "severity", "file_path", "code_snip", "security_risk",
     "mitigation", "status", "deleted", "approved", "reference", "created_at",
+    "rule_id", "confidence", "verifier_reason",
 ]
 
 
@@ -38,6 +39,9 @@ class FindingModel:
             "approved": finding.approved,
             "reference": finding.reference or "",
             "created_at": _iso(finding.created_at),
+            "rule_id": finding.rule_id or "",
+            "confidence": finding.confidence,        # float | None (None on pre-W7 rows)
+            "verifier_reason": finding.verifier_reason or "",
         }
 
     @classmethod

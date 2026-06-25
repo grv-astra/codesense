@@ -32,6 +32,23 @@ class FindingModelTests(TestCase):
         self.assertEqual(FindingModel.soft_delete(fid), 1)
         self.assertNotIn(fid, [f["id"] for f in FindingModel.find_all_by_scan("scan1")])
 
+    def test_persists_rule_id_confidence_and_verifier_reason(self):
+        # W7: these three were previously dropped by the _FIELDS filter; they
+        # must now round-trip through insert (write) and serialize (read).
+        out = FindingModel.insert_many([self._finding(
+            rule_id="py.audit.sqli.tainted-sql-string",
+            confidence=0.92,
+            verifier_reason="unsanitized concat reaches execute")])
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["rule_id"], "py.audit.sqli.tainted-sql-string")
+        self.assertEqual(out[0]["confidence"], 0.92)
+        self.assertEqual(out[0]["verifier_reason"], "unsanitized concat reaches execute")
+        # re-read from the DB to confirm the columns persisted, not just echoed
+        again = FindingModel.find_by_id(out[0]["id"])
+        self.assertEqual(again["rule_id"], "py.audit.sqli.tainted-sql-string")
+        self.assertEqual(again["confidence"], 0.92)
+        self.assertEqual(again["verifier_reason"], "unsanitized concat reaches execute")
+
     def test_find_by_project_via_scan_ids(self):
         from local.api_app.models.scan_models import ScanModel
         s = ScanModel.create({"project_id": "projX", "scan_name": "S"})

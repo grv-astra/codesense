@@ -247,5 +247,11 @@ def normalize(f: SemgrepFinding, scan_id: str, triggered_by: str) -> tuple[dict,
         "created_by": triggered_by,
         "lines": [f.start_line, f.end_line],
         "affected": f.rule_id,
+        # W7 — persisted verifier metadata. rule_id is the detector check_id;
+        # confidence/verifier_reason are placeholders here and get overwritten by
+        # fuse() for any finding the LLM verifier judges (fail-open leaves them).
+        "rule_id": f.rule_id,
+        "confidence": None,
+        "verifier_reason": "",
     }
     return finding, build_dataflow_context(f)

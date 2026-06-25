@@ -63,6 +63,12 @@ class Finding(UUIDModel):
     approved = models.BooleanField(default=False)
     reference = models.CharField(max_length=512, blank=True, default="")
     created_at = models.DateTimeField()
+    # W7 — verifier metadata + the Semgrep rule id (previously dropped on persist).
+    # rule_id = the detector check_id; confidence/verifier_reason come from the LLM
+    # verifier via fusion. Nullable/blank for back-compat with pre-W7 rows.
+    rule_id = models.CharField(max_length=512, blank=True, default="")
+    confidence = models.FloatField(null=True, blank=True)
+    verifier_reason = models.TextField(blank=True, default="")
 
     class Meta:
         app_label = "api_app"
