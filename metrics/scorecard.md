@@ -184,3 +184,52 @@ baseline 0.34 was the dead FIM 3B, never re-measurable since it failed open). Br
 
 - Enrichment parse-rate **PASS** (1.00 > 0.80). **Milestone: LLM quality fixed.**
 - Device-tier resolution: ≥2 tiers resolve to the right GGUF filename (all 3 + default tested).
+
+## Week 6 (Parallelize verifier + reporter calls) — 2026-06-25
+
+Bounded-concurrency over the per-finding LLM work (`verify()` + `generate_report()`) in
+`server/scanner/rag/lsast_scanner.py`. Branch `week6` (off production tip `72b2de5`).
+
+| Metric | W1 baseline | W6 | Target |
+|---|---|---|---|
+| Finding-set identity (parallel vs serial) | — | **identical** (unit-proven, all 4 fuse branches) | byte-identical |
+| Scan wall-time (p50, s) | 540 | **pending live host** (see caveat) | ↓ ≥ 40% |
+| Per-finding LLM latency (s) | N/A | **pending live host** | record |
+
+### What shipped (code-complete, tests green)
+
+- **`_process_one(sf, scan_id, triggered_by, llm_ok=True)`** — the per-finding unit
+  (normalize → verify → fuse → enrich) extracted from the serial loop, doing **no DB I/O**
+  so it is thread-safe. Returns the `FusionOutcome` or `None` on a per-finding error;
+  honours the fail-open (`llm_ok=False`) path.
+- **Bounded `ThreadPoolExecutor`** in `lsast_scan_folder`, capped by **`LSAST_MAX_WORKERS`**
+  (default 4; `1` = legacy serial; serial branch also taken for a single finding). The LLM
+  calls are IO-bound (`requests` releases the GIL), so threads overlap them. `ex.map`
+  preserves input order; **persistence + progress stay on the main thread** in detector
+  order, so the visible/filtered partition is identical to serial and the incremental
+  "findings appear live" persistence semantics are unchanged.
+- **Tests** (`test_lsast_scanner.py`): `_process_one` unit (TP / error→None / fail-open);
+  **parallel == serial identity** over all four fuse branches (show / needs_review ×2 /
+  suppress), comparing a stable projection (excludes the nondeterministic `code` uuid +
+  `created_at`); one-save-per-visible under concurrency; and a **`Barrier(3)`** test that
+  proves three `verify()` calls are genuinely in flight at once (it times out — fails — on
+  the old serial code). Full scanner suite **136 pass / 2 skip**; characterization green.
+
+### Provenance & caveats
+
+- ⚠️ **Wall-time not yet measured live.** The local 7B `llama-server` (`astra-model-host/`,
+  sibling of `yacm/`) was **down** this session, so the ≥40% acceptance number is **pending a
+  running host**. The identity/correctness acceptance (parallel ≡ serial) **is** met now, via
+  the deterministic unit tests above.
+- ⚠️ **Honest concurrency ceiling.** The local 7B is **CPU-only and serializes inference**
+  (~4.6 tok/s, ~40 s/call). Bounded concurrency overlaps detector/normalize/JSON-parse work
+  with in-flight LLM calls, but it **cannot beat the single CPU inference slot** — so a real
+  40% drop is unlikely on this box; the honest win is small here and the true number needs a
+  **multi-slot host (the infra box)** where `LSAST_MAX_WORKERS` can exceed the serialized
+  local slot. This row will not claim 40% if the bottleneck remains the single CPU slot; the
+  gap will be documented rather than papered over.
+
+### Status vs acceptance (W6)
+
+- Identical-findings acceptance: **PASS** (unit-proven, order-independent).
+- ≥40% wall-time: **PENDING** live host (see caveats) — code path in place and env-tunable.
