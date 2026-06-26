@@ -296,3 +296,65 @@ Branch `week6` (Batch A).
 - Curated ≥3 languages: **PASS** (5).
 - Detector tier still passes: **PASS** (F1/recall 1.000, FP-rate 0.000).
 - Gate fails on injected regression: **PASS** (exit 1 on empty-rules injection, local).
+
+## Week 9 (Language-coverage expansion) — 2026-06-26
+
+Registry routing + per-language detector eval for the W9 target langs. The registry
+already shipped the full top-40 table (go/ruby/csharp/kotlin all present), so W9.1 is a
+routing+invariant **lock**, not new entries; W9.2 adds the genuinely-new end-to-end eval
+coverage (C# + Kotlin curated pairs). Branch `week6` (off production tip `72b2de5`).
+
+| Metric | W8 | W9 | Acceptance |
+|---|---|---|---|
+| Curated languages | 5 (py, js, go, php, ruby) | **7** (+csharp, kotlin) | ≥4 top-40 end-to-end |
+| Curated cases (real/safe) | 10 (5/5) | **14 (7/7)** | grow |
+| Detector tier on curated | F1 1.000 / FP 0.000 | **F1 1.000 / recall 1.000 / FP 0.000** (TP=7 FP=0 FN=0 TN=7) | still PASS |
+| New-lang detector recall | — | **csharp 1.000, kotlin 1.000** (non-zero) | non-zero per new lang |
+| Registry well-formed | — | **unique exts, coverage ∈ {strong,partial,none}** (10 unit tests) | unique extensions |
+
+### Per-language detector recall (W9 run)
+
+| Language | Recall |
+|---|---|
+| csharp | 1.000 |
+| go | 1.000 |
+| javascript | 1.000 |
+| kotlin | 1.000 |
+| php | 1.000 |
+| python | 1.000 |
+| ruby | 1.000 |
+
+### Provenance & caveats
+
+- **Run:** `run_eval.py --dataset curated --tier detector --gate` (real OpenGrep +
+  bundled `dist/semgrep-rules`, Windows, `LSAST_MAX_WORKERS` irrelevant — detector tier has
+  no LLM calls). Verdict **PASS**, exit 0. Artifact written under `scripts/eval/results/`.
+- **New fixtures** (one real + one safe each), probed per-file before the full gate run
+  (the ~85 s/scan rule-load cost makes per-file probing the fast validation path):
+  - **csharp** SQLi via `csharp-sqli` (**taint mode**): tainted string concatenated into
+    `new SqlCommand($CMD,…)` → flagged (CWE-89, line 8); the parameterized variant (constant
+    command text + `Parameters.AddWithValue` sanitizer) → **0 findings** (true TN).
+  - **kotlin** command injection via `command-injection-formatted-runtime-call`
+    (**pattern-based**, `$RUNTIME.exec($X + $Y)`): `Runtime.exec("ping " + host)` → flagged
+    (CWE-78, line 3); the array form `exec(arrayOf("ping", host))` has no concatenation →
+    **0 findings** (true TN).
+- ⚠️ **Manifest CWE = raw rule output** (matcher gotcha, carried from W8). The eval matches
+  on *basename + CWE family* against the **raw** `run_semgrep` output and does **not** run
+  `normalize`/`derive_cwe`. Both new rules emit their CWE directly (csharp→CWE-89, kotlin→
+  CWE-78), so no W4-style CWE-94→78 wrinkle here (unlike go's `dangerous-exec-command`).
+- ⚠️ **N is still small (7 real / 7 safe).** This is a coverage+routing probe, not a
+  statistically meaningful headline; the OWASP Benchmark headline remains deferred. Safe
+  variants are all true TNs (detector FP-rate stays 0.000), so — as in W4/W8 — the curated
+  set still does **not** exercise verifier FP-suppression (needs genuine detector-FP cases).
+- **Registry:** `scanner/tests/test_languages.py` (10 unit tests) locks routing for
+  go/ruby/csharp/kotlin (incl. `.kts`, case-insensitive), unique extensions, valid coverage
+  tiers, and the `none`-tier⇔no-analyzer invariant. Suite **scanner+local.api_app 165 pass /
+  2 skip**; characterization snapshot green.
+
+### Status vs acceptance (W9)
+
+- ≥4 top-40 langs end-to-end: **PASS** (go/php/ruby from W8 + csharp/kotlin new = 5 beyond
+  python/js; 7 curated langs total).
+- Per-language detector eval runs, new langs non-zero recall: **PASS** (csharp/kotlin 1.000).
+- Registry well-formed (unique extensions, valid tiers): **PASS** (10 unit tests).
+- **Milestone: broader coverage, measured.**

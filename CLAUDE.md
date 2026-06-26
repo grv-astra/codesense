@@ -15,8 +15,14 @@ before acting (full developer onboarding: `docs/handoff/onboarding.md`). This fi
   ≥40% **pending a live model host**, CPU-serialized 7B caps real speedup); W7 persists + exposes
   `rule_id`/`confidence`/`verifier_reason` (migration `0002`); W8 added the detector-recall CI gate
   (`.github/workflows/lsast-eval-gate.yml`) + grew curated to **5 languages** (added go/php/ruby,
-  10 cases, F1/recall 1.000, FP 0.000). Suite **scanner+api_app 164 pass / 2 skip + 5 curated eval
-  tests**; characterization snapshot green. See `metrics/scorecard.md` W6/W7/W8. **Next: Phase 3 / W9.**
+  10 cases, F1/recall 1.000, FP 0.000). See `metrics/scorecard.md` W6/W7/W8.
+- **Position: PHASE 3 STARTED — W9 DONE (2026-06-26), on branch `week6`** (same branch as Batch A,
+  committed locally, NOT pushed). W9 expanded language coverage: registry routing **lock** for
+  go/ruby/csharp/kotlin (all already in the top-40 table — `test_languages.py`, 10 unit tests) +
+  curated eval grown **5→7 languages** (added C# SQLi + Kotlin cmd-injection pairs; detector
+  F1/recall **1.000**, FP **0.000**, TP=7/FP=0/FN=0/TN=7; new langs csharp/kotlin recall **1.000**).
+  Suite **scanner+local.api_app 165 pass / 2 skip + 6 curated eval tests**; characterization
+  snapshot green. See `metrics/scorecard.md` W9. **Next: W10 (finding-details UX — frontend).**
 - **Phase 1 (W1–W5, COMPLETE 2026-06-23)** — milestone "LLM quality fixed". Branch
   `week5-enrichment-tiers`, **merged into production `72b2de5`** this cycle. Phase 1 summary:
   - **W2 — license-safe instruct model** ✅ (branch `week2-instruct-model`, pushed, no PR): `model_mode()`
@@ -141,31 +147,53 @@ position** above) sequences this work starting at Week 1.
 
 Suite: **scanner+api_app 164 pass / 2 skip** + 5 curated eval tests; characterization snapshot green.
 
-## Next-week brief — Week 9: Language-coverage expansion (Phase 3 start)
+## Phase 3 — W9 DONE on branch `week6` (committed locally, NOT pushed)
 
-**Goal:** add ≥4 top-40 languages end-to-end (registry routing + bundled rules + per-language eval), with
-explicit "no analyzer coverage" reporting for routing-only langs. **Acceptance:** `language_for_path` resolves
-new extensions to the right `Language`/coverage tier; per-language detector eval runs; registry stays
-well-formed (unique extensions). Plan: `docs/superpowers/plans/...-phase3.md` (Week 9, ~line 18).
+- **W9 — language-coverage expansion** ✅ Detector/registry/eval work, **no model needed**.
+  - **W9.1 — registry routing lock.** The top-40 table in `server/scanner/rag/languages.py` already
+    contained go/ruby/csharp/kotlin, so this is a **lock**, not new entries: `test_languages.py`
+    (10 unit tests) asserts the four W9 langs route (incl. `.kts`, case-insensitive) + carry a real
+    Semgrep analyzer at `strong` tier, extensions are unique, coverage ∈ {strong,partial,none}, and
+    `none`-tier ⇔ no analyzer.
+  - **W9.2 — per-language detector eval.** Curated grown **5→7 languages** (added **C#** SQLi via the
+    taint-mode `csharp-sqli` rule, CWE-89; **Kotlin** cmd-injection via the pattern-based
+    `command-injection-formatted-runtime-call`, CWE-78). Each is one real + one safe fixture; safe
+    variants yield **0 findings** (true TNs). Full gate `run_eval.py --dataset curated --tier detector
+    --gate` → **PASS** (F1/recall 1.000, FP 0.000, TP=7/FP=0/FN=0/TN=7); per-language recall **1.000**
+    for all 7 langs incl. the new csharp/kotlin. Manifest CWE = **raw** rule output (matcher gotcha:
+    eval skips `normalize`/`derive_cwe`). See `metrics/scorecard.md` W9.
+
+Suite: **scanner+local.api_app 165 pass / 2 skip** + 6 curated eval tests; characterization green.
+
+## Next-week brief — Week 10: Finding-details UX overhaul (consumes the W7 API fields)
+
+**Goal:** the finding-details view surfaces the verifier confidence + reason, the LLM remediation, the
+dataflow, a CWE reference link, and severity — degrading gracefully for fail-open findings with empty
+fields. **Acceptance:** the details component renders all fields for a real scan finding and renders
+nothing broken when a field is empty; a component render test passes. Plan:
+`docs/superpowers/plans/...-phase3.md` (Week 10, ~line 68). **This is frontend work (React/TS), not backend.**
 
 **Tasks (TDD):**
-1. **9.1 — registry entries** in `server/scanner/rag/languages.py` (`LANGUAGES` list): add Go/Ruby/C#/Kotlin
-   (`Language("go", (".go",), "go", "strong")` shape). New test `server/scanner/tests/test_languages.py`:
-   extensions resolve, extensions are unique, coverage ∈ {strong,partial,none}.
-2. **9.2 — per-language detector eval + coverage report.** The W8 curated set already has go/php/ruby pairs
-   — extend per the new langs; run `run_eval.py --dataset curated --tier detector` and record per-language
-   recall in `metrics/scorecard.md` "W9".
+1. **10.1 — extend the finding type** in `client/src/types/finding.ts`: add optional
+   `rule_id?: string`, `confidence?: number | null`, `verifier_reason?: string` (the W7 API now returns
+   these via `FindingModel.serialize`). Typecheck: `cd client && npx tsc --noEmit` → no new errors.
+2. **10.2 — render them** in `client/src/components/update/UpdatedFinding.tsx`: add a **Remediation**
+   block (`finding.mitigation`, only if non-empty), an **Impact** block (`finding.security_risk`), a
+   **Verifier** block (confidence as a % + `verifier_reason`, only if `confidence != null`), and a **CWE
+   link** (`https://cwe.mitre.org/data/definitions/<n>.html` from `finding.cwe`). Guard each with a truthy
+   check so empty fields render nothing. Write/extend a vitest+RTL render test (see plan ~line 88 for the
+   exact test shape) — assert remediation + CWE link + confidence show when present, and the component
+   renders without crashing when `confidence`/`verifier_reason`/`mitigation` are undefined.
 
 **Environment notes (carry forward):**
-- Local model server is in **`astra-model-host/`** (sibling of `yacm/`), CPU-only/serializes; W9 is
-  detector/registry work and **does not need the model** (no LLM calls in the language/eval tier).
-- Tests: `server\.venv\Scripts\python.exe manage.py test scanner` with `PYTHONUTF8=1` +
-  `SEMGREP_BIN`/`SEMGREP_RULES_DIR` = `yacm\dist\tools\windows\semgrep.exe` / `yacm\dist\semgrep-rules`.
-  Suite **164 pass / 2 skip**; keep the **characterization snapshot green**. Curated eval (no Django):
-  `cd scripts && ..\server\.venv\Scripts\python.exe -m unittest eval.tests.test_curated`.
-- ⚠️ **OpenGrep is slow (~85s/scan, rule-load bound)** — a full 10-case curated detector run is ~14 min;
-  per-file probing is the fast way to validate new fixtures before a full gate run.
-- Branch: continue on `week6` or cut `week9` off it. **Do NOT push to frozen production
+- W10 is **frontend** (`client/`, React/TS + Tauri). Backend/model untouched — no llama-server,
+  no Semgrep. Use the `client/` test setup (vitest/RTL; add a minimal vitest test if none exists).
+- The W7 fields are live in the API (`rule_id`/`confidence`/`verifier_reason`, migration `0002`,
+  `FindingModel.serialize`) — W10 just consumes them. `cwe`/`severity`/`file_path` stay deterministic.
+- Branch: continue on `week6` (or cut `week10` off it). **Do NOT push to frozen production
   `lsast-handoff-2026-05-31` without explicit OK.**
+- ⚠️ Backend reminder if you re-run the eval: **OpenGrep ~85s/scan, rule-load bound** — a full 14-case
+  curated detector run is ~20 min; per-file probing validates new fixtures fast. Combined backend suite
+  is `manage.py test scanner local.api_app` (the app label is **`local.api_app`**, not `api_app`).
 - Still open (pre-existing): `scripts/eval/tests/test_owasp.py` POSIX-path failure (out of scope).
 - **W6 carry:** the ≥40% wall-time number is still owed — run it on the infra box once the 7B host is up.

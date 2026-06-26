@@ -33,6 +33,12 @@ class CuratedTests(unittest.TestCase):
         self.assertGreaterEqual(len(langs), 3, f"want >=3 languages, got {langs}")
         self.assertTrue({"go", "php", "ruby"} <= langs, f"new langs missing: {langs}")
 
+    def test_w9_adds_csharp_and_kotlin(self):
+        # W9.2 — curated grown to cover the new strong langs end-to-end.
+        langs = {c["language"] for c in _manifest()["cases"]}
+        self.assertTrue({"csharp", "kotlin"} <= langs, f"W9 langs missing: {langs}")
+        self.assertGreaterEqual(len(langs), 7, f"want >=7 languages, got {langs}")
+
     def test_every_language_has_a_real_and_safe_pair(self):
         labels = defaultdict(set)
         for c in _manifest()["cases"]:

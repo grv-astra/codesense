@@ -9,6 +9,10 @@
     {"case_id": "php_sqli_unsafe", "file": "php_sqli_unsafe.php", "lines": [4, 4], "cwe": "CWE-89", "label": "real", "language": "php"},
     {"case_id": "php_sqli_safe", "file": "php_sqli_safe.php", "lines": [4, 4], "cwe": "CWE-89", "label": "fake", "language": "php"},
     {"case_id": "rb_sqli_unsafe", "file": "rb_sqli_unsafe.rb", "lines": [4, 4], "cwe": "CWE-89", "label": "real", "language": "ruby"},
-    {"case_id": "rb_sqli_safe", "file": "rb_sqli_safe.rb", "lines": [4, 4], "cwe": "CWE-89", "label": "fake", "language": "ruby"}
+    {"case_id": "rb_sqli_safe", "file": "rb_sqli_safe.rb", "lines": [4, 4], "cwe": "CWE-89", "label": "fake", "language": "ruby"},
+    {"case_id": "cs_sqli_unsafe", "file": "cs_sqli_unsafe.cs", "lines": [8, 8], "cwe": "CWE-89", "label": "real", "language": "csharp"},
+    {"case_id": "cs_sqli_safe", "file": "cs_sqli_safe.cs", "lines": [8, 8], "cwe": "CWE-89", "label": "fake", "language": "csharp"},
+    {"case_id": "kt_cmdi_unsafe", "file": "kt_cmdi_unsafe.kt", "lines": [3, 3], "cwe": "CWE-78", "label": "real", "language": "kotlin"},
+    {"case_id": "kt_cmdi_safe", "file": "kt_cmdi_safe.kt", "lines": [3, 3], "cwe": "CWE-78", "label": "fake", "language": "kotlin"}
   ]
 }

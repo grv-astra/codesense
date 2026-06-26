@@ -44,3 +44,19 @@ class LanguageRegistryTests(SimpleTestCase):
     def test_extensionless_dockerfile_resolves(self):
         self.assertEqual(language_for_path("Dockerfile").name, "dockerfile")
         self.assertEqual(language_for_path("deploy/Dockerfile").name, "dockerfile")
+
+    def test_w9_target_languages_route_and_are_strong(self):
+        # W9 acceptance: ≥4 top-40 langs resolve end-to-end with a real analyzer.
+        cases = {
+            "main.go": "go",
+            "app.rb": "ruby",
+            "Program.cs": "csharp",
+            "Main.kt": "kotlin",
+            "Build.kts": "kotlin",
+        }
+        by_name = {lang.name: lang for lang in LANGUAGES}
+        for path, name in cases.items():
+            self.assertEqual(language_for_path(path).name, name, path)
+        for name in ("go", "ruby", "csharp", "kotlin"):
+            self.assertEqual(by_name[name].coverage, "strong", name)
+            self.assertIsNotNone(by_name[name].semgrep_lang, name)
