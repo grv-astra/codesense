@@ -151,14 +151,36 @@ def _cwe_from_category(metadata: dict[str, Any]) -> str:
     return "CWE-710" if cat in _NON_SECURITY_CATEGORIES else ""   # coding standards
 
 
+# Rule-name signals for an OS-command-execution sink (shell_exec, system, exec,
+# passthru, proc_open, popen, pcntl_exec). Several upstream registry rules
+# (php tainted-exec, exec-use, wp-command-execution-audit) tag these CWE-94
+# (code injection) when an OS command sink is really CWE-78. Specific enough not
+# to match genuine code-injection rules (eval/assert/create_function).
+_OS_COMMAND_RULE_SIGNALS: tuple[str, ...] = (
+    "tainted-exec", "exec-use", "shell-exec", "shell_exec",
+    "command-execution", "command-exec", "os-command", "system-exec",
+    "proc-open", "proc_open", "passthru", "popen", "pcntl",
+)
+
+
+def _is_os_command_rule(rule_id: str) -> bool:
+    rid = (rule_id or "").lower()
+    return any(sig in rid for sig in _OS_COMMAND_RULE_SIGNALS)
+
+
 def derive_cwe(metadata: dict[str, Any], rule_id: str) -> str:
     """Best-effort CWE: explicit metadata, else rule-name keyword, else OWASP tag,
     else a coding-standards CWE for non-security categories. Returns '' when
     nothing fits (the caller renders that as CWE-Unknown)."""
-    return (_extract_cwe(metadata)
-            or _cwe_from_rule_id(rule_id)
-            or _cwe_from_owasp(metadata)
-            or _cwe_from_category(metadata))
+    cwe = (_extract_cwe(metadata)
+           or _cwe_from_rule_id(rule_id)
+           or _cwe_from_owasp(metadata)
+           or _cwe_from_category(metadata))
+    # Correct the upstream mislabel: an OS-command-execution sink flagged CWE-94
+    # (code injection) is really CWE-78 (OS command injection).
+    if cwe == "CWE-94" and _is_os_command_rule(rule_id):
+        return "CWE-78"
+    return cwe
 
 
 def _find_loc_and_code(node: Any) -> tuple[int | None, str]:

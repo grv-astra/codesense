@@ -25,8 +25,15 @@ def build_verifier_prompt(*, cwe: str, language: str,
         f"Dataflow trace:\n{dataflow.render_for_prompt()}\n\n"
         f"Code excerpt ({language}):\n"
         f"```{language}\n{excerpt}\n```\n\n"
-        "QUESTION: Is this finding a TRUE positive or a FALSE positive? Consider whether "
-        "any sanitizer / parameterization / ORM / framework-level escaping makes the sink safe.\n\n"
+        "QUESTION: Judge what this code ACTUALLY does, then classify the finding.\n"
+        "  - TP (true positive): the finding is REAL and EXPLOITABLE — attacker-controlled "
+        "input reaches the sink along a concrete source->sink path with no effective "
+        "sanitizer, parameterization, ORM, validation, or framework-level escaping.\n"
+        "  - FP (false positive): the code is ACTUALLY SAFE — e.g. the value is a constant or "
+        "not attacker-controlled, or it is sanitized / parameterized / validated / escaped "
+        "before the sink, so the flagged sink cannot be exploited.\n"
+        "Default to FP unless you can name a concrete source->sink path an attacker could "
+        "exploit. A static analyzer flag is only a hint, not proof.\n\n"
         "Respond with ONLY this JSON object, no prose, no code fences:\n"
         '{"verdict": "TP" | "FP", "reason": "<one short sentence>", "confidence": 0.0-1.0}'
     )
@@ -61,7 +68,9 @@ def verify(*, cwe: str, language: str,
                                 confidence=0.3)
     try:
         client = get_ready_llm()
-        response = client.invoke({"query": prompt}) or {}
+        response = client.invoke(
+            {"query": prompt, "response_format": {"type": "json_object"}}
+        ) or {}
     except Exception as exc:        # noqa: BLE001 — fail-open by design
         logger.warning("LLM verifier call failed: %s", exc)
         return fail_open

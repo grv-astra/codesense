@@ -30,6 +30,28 @@ class BuildVerifierPromptTests(SimpleTestCase):
         self.assertNotIn("Risk indicators detected", prompt)         # must NOT pre-hint
         self.assertNotIn("vulnerable", prompt.lower().split("question:")[0])
 
+    def test_defines_tp_fp_semantics_and_defaults_to_fp(self):
+        """The proven fix (roadmap W4.1): the prompt must DEFINE TP/FP, tell the
+        model to judge what the code actually does, and default to FP unless a
+        concrete source->sink exploit path exists. Without these the verifier
+        rubber-stamps TP and never suppresses false positives (DVWA impossible.*)."""
+        prompt = build_verifier_prompt(
+            cwe="CWE-89", language="python",
+            dataflow=_ctx(),
+            code_excerpt="q = request.GET['q']\ncursor.execute(query)",
+        )
+        low = prompt.lower()
+        # TP/FP are explicitly defined, not left to the model's guess.
+        self.assertIn("true positive", low)
+        self.assertIn("false positive", low)
+        # TP = real/exploitable; FP = actually safe.
+        self.assertIn("exploit", low)
+        self.assertIn("safe", low)
+        # Judge behaviour, not the mere presence of a flag.
+        self.assertIn("actually", low)
+        # FP is the default when no concrete exploit path can be named.
+        self.assertRegex(low, r"default.*\bfp\b|\bfp\b.*default")
+
 
 class VerifyTests(SimpleTestCase):
     def _mock_llm(self, response_text: str):

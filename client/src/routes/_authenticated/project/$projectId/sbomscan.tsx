@@ -122,14 +122,24 @@ function RouteComponent() {
   ];
 
   const handleDownloadCSV = async (scan: SbomScanDetails) => {
-    let response = await scanService.downloadSbomCsv(scan.id)
-    const url = window.URL.createObjectURL(new Blob([response.data]));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${scan.scan_name}_findings.xlsx`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+    try {
+      const response = await scanService.downloadSbomCsv(scan.id)
+      const blob = new Blob([response.data], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${scan.scan_name}_findings.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      toast("Download failed", {
+        description: "Could not export findings. Please try again.",
+      });
+    }
   }
 
   const handleDelete = async (scan: SbomScanDetails) => {

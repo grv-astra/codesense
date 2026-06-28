@@ -96,7 +96,11 @@ def generate_report(*, rule_name: str, cwe: str, language: str,
                                  code_excerpt=code_excerpt, detector_note=detector_note)
     try:
         client = get_ready_llm()
-        response = client.invoke({"query": prompt, "max_tokens": _REPORT_MAX_TOKENS}) or {}
+        response = client.invoke({
+            "query": prompt,
+            "max_tokens": _REPORT_MAX_TOKENS,
+            "response_format": {"type": "json_object"},
+        }) or {}
     except Exception as exc:        # noqa: BLE001 — fail-open by design
         logger.warning("Finding-report enrichment call failed: %s", exc)
         return None
