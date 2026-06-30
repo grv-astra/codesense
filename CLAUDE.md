@@ -10,7 +10,8 @@ before acting (full developer onboarding: `docs/handoff/onboarding.md`). This fi
   and per-phase plans (`...-phase1/2/3.md`) alongside the README. Execution model: one session per week,
   context reset between; each week ends with its acceptance test green + docs updated + next-week brief.
 - **Position: PHASE 2 BACKEND DONE (W6–W8, 2026-06-25), on branch `week6` (off production tip
-  `72b2de5`, committed locally, NOT pushed).** Batch A complete: W6 parallelized the per-finding
+  `72b2de5`). W6–W8 ARE pushed — `origin/week6` holds them at `2bd8e7c` (W8). Only the later
+  W9/W10 commits are local-only (awaiting push OK).** Batch A complete: W6 parallelized the per-finding
   LLM work (bounded `ThreadPoolExecutor`, `LSAST_MAX_WORKERS`, identical findings — wall-time
   ≥40% **pending a live model host**, CPU-serialized 7B caps real speedup); W7 persists + exposes
   `rule_id`/`confidence`/`verifier_reason` (migration `0002`); W8 added the detector-recall CI gate
@@ -22,7 +23,17 @@ before acting (full developer onboarding: `docs/handoff/onboarding.md`). This fi
   curated eval grown **5→7 languages** (added C# SQLi + Kotlin cmd-injection pairs; detector
   F1/recall **1.000**, FP **0.000**, TP=7/FP=0/FN=0/TN=7; new langs csharp/kotlin recall **1.000**).
   Suite **scanner+local.api_app 165 pass / 2 skip + 6 curated eval tests**; characterization
-  snapshot green. See `metrics/scorecard.md` W9. **Next: W10 (finding-details UX — frontend).**
+  snapshot green. See `metrics/scorecard.md` W9.
+- **Position: PHASE 3 — W10 DONE (2026-06-30), on branch `week6`** (local-only, NOT pushed).
+  W10 was the finding-details UX overhaul — **frontend only** (React/TS, `client/`), consuming
+  the W7 verdict fields. 10.1 extended `FindingDetails` with `rule_id?`/`confidence?: number |
+  null`/`verifier_reason?` (commit `e2359fb`); 10.2 rendered a **Verifier Verdict** block
+  (confidence %, reason, rule_id — guarded by `confidence != null`), a deterministic **CWE
+  Reference** link (`cwe.mitre.org/.../<n>.html`), and guarded the Mitigation block so empty
+  fail-open findings degrade gracefully (commit `6deda4c`). Stood up the **client test harness**
+  (none existed): vitest + RTL + jsdom, `npm test`. Render test 2/2 pass; `tsc --noEmit` clean.
+  ⚠️ Live-scan visual confirmation PENDING (needs the model host). See `metrics/scorecard.md`
+  W10. **Next: W11 (signed/notarized installer — BLOCKED on code-signing certs + a build host).**
 - **Phase 1 (W1–W5, COMPLETE 2026-06-23)** — milestone "LLM quality fixed". Branch
   `week5-enrichment-tiers`, **merged into production `72b2de5`** this cycle. Phase 1 summary:
   - **W2 — license-safe instruct model** ✅ (branch `week2-instruct-model`, pushed, no PR): `model_mode()`
@@ -165,35 +176,57 @@ Suite: **scanner+api_app 164 pass / 2 skip** + 5 curated eval tests; characteriz
 
 Suite: **scanner+local.api_app 165 pass / 2 skip** + 6 curated eval tests; characterization green.
 
-## Next-week brief — Week 10: Finding-details UX overhaul (consumes the W7 API fields)
+## Phase 3 — W10 DONE on branch `week6` (committed locally, NOT pushed)
 
-**Goal:** the finding-details view surfaces the verifier confidence + reason, the LLM remediation, the
-dataflow, a CWE reference link, and severity — degrading gracefully for fail-open findings with empty
-fields. **Acceptance:** the details component renders all fields for a real scan finding and renders
-nothing broken when a field is empty; a component render test passes. Plan:
-`docs/superpowers/plans/...-phase3.md` (Week 10, ~line 68). **This is frontend work (React/TS), not backend.**
+- **W10 — finding-details UX overhaul** ✅ **Frontend only** (React/TS, `client/`); consumes the
+  W7 verdict fields, no backend/model/Semgrep work.
+  - **10.1 — extend the finding type** (`client/src/types/finding.ts`, commit `e2359fb`): added
+    optional `rule_id?: string`, `confidence?: number | null`, `verifier_reason?: string`.
+    `confidence` is `number | null` (not `number`) to preserve fail-open/pre-W7 nulls — the
+    serializer leaves them null, never coalesced. `tsc --noEmit` clean.
+  - **10.2 — render them** (`client/src/components/update/UpdatedFinding.tsx`, commit `6deda4c`):
+    a **Verifier Verdict** block (confidence as a rounded `%` + `verifier_reason` + `rule_id`,
+    guarded by `confidence != null` so fail-open null/undefined renders nothing); a deterministic
+    **CWE Reference** link (`https://cwe.mitre.org/data/definitions/<n>.html`, `<n>` regex-extracted
+    from `finding.cwe`); and the existing **Mitigation** (remediation) block now guarded by truthy
+    `finding.mitigation` so empty fail-open findings degrade gracefully. (Impact/Description/dataflow
+    `flow_diagram`/severity already existed in this component.)
+  - **Test harness stood up from scratch** — `client/` had no runner. Added `vitest` +
+    `@testing-library/react`/`jest-dom`/`dom` + `jsdom` devDeps, a jsdom `test` block in
+    `vite.config.ts` (`src/test/setup.ts`), and a `"test": "vitest run"` script.
+    `UpdatedFinding.test.tsx` (TDD, RED→GREEN) asserts remediation + confidence `%` + verifier
+    reason + the CWE **link** when present, and no crash when the verdict fields are empty. **2/2
+    pass**; `tsc --noEmit` clean. See `metrics/scorecard.md` W10.
+  - ⚠️ **Live-scan visual confirmation PENDING** (plan step 10.2.5) — needs the 7B host + a real
+    scan to eyeball the new blocks; not run this session (model host down, frontend-only week).
 
-**Tasks (TDD):**
-1. **10.1 — extend the finding type** in `client/src/types/finding.ts`: add optional
-   `rule_id?: string`, `confidence?: number | null`, `verifier_reason?: string` (the W7 API now returns
-   these via `FindingModel.serialize`). Typecheck: `cd client && npx tsc --noEmit` → no new errors.
-2. **10.2 — render them** in `client/src/components/update/UpdatedFinding.tsx`: add a **Remediation**
-   block (`finding.mitigation`, only if non-empty), an **Impact** block (`finding.security_risk`), a
-   **Verifier** block (confidence as a % + `verifier_reason`, only if `confidence != null`), and a **CWE
-   link** (`https://cwe.mitre.org/data/definitions/<n>.html` from `finding.cwe`). Guard each with a truthy
-   check so empty fields render nothing. Write/extend a vitest+RTL render test (see plan ~line 88 for the
-   exact test shape) — assert remediation + CWE link + confidence show when present, and the component
-   renders without crashing when `confidence`/`verifier_reason`/`mitigation` are undefined.
+## Next-week brief — Week 11: Signed/notarized distribution build (BLOCKED on certs + build host)
 
-**Environment notes (carry forward):**
-- W10 is **frontend** (`client/`, React/TS + Tauri). Backend/model untouched — no llama-server,
-  no Semgrep. Use the `client/` test setup (vitest/RTL; add a minimal vitest test if none exists).
-- The W7 fields are live in the API (`rule_id`/`confidence`/`verifier_reason`, migration `0002`,
-  `FindingModel.serialize`) — W10 just consumes them. `cwe`/`severity`/`file_path` stay deterministic.
-- Branch: continue on `week6` (or cut `week10` off it). **Do NOT push to frozen production
+**Goal:** a clean build produces an installer bundling the real OpenGrep binary, the Apache instruct
+model (mid tier), and the rules, that installs + runs + scans on a fresh machine with rule-name titles +
+verifier verdicts. **Acceptance:** DMG/EXE on a clean VM (no dev tools) installs, launches, logs in,
+completes a scan. Plan: `docs/superpowers/plans/...-phase3.md` (Week 11, ~line 118). **Build/packaging
+work, not feature code.**
+
+**Tasks:**
+1. **11.1 — macOS signed/notarized DMG** (`scripts/build_macos.sh`): confirm model staging targets the
+   chosen tier GGUF (`MODEL_GGUF`/`MODEL_TIER`) and that `LLM_MODEL_MODE=instruct` is set in the Tauri
+   launcher env (`client/src-tauri/src/main.rs`, alongside `VLLM_MODEL`). Build with
+   `APPLE_SIGNING_IDENTITY`/`APPLE_ID`/`APPLE_PASSWORD`/`APPLE_TEAM_ID` → `.dmg`; `codesign --verify
+   --deep --strict` + `xcrun stapler validate` OK.
+2. **11.2 — Windows EXE** (`scripts/build_windows.ps1`): mirror the model/mode wiring; produce the
+   installer with `semgrep.exe` (real OpenGrep, already fixed) + the model + rules.
+
+**Environment notes / blockers (carry forward):**
+- ⛔ **BLOCKED — needs procurement before W11 can fully land:** (a) an **Apple Developer ID Application**
+  signing cert + notarization credentials, (b) a **Windows code-signing cert**, and (c) a **build host**
+  for each OS (macOS for the DMG, Windows for the EXE). **Without these, W11 = the scripts + docs only**
+  (wire the signing/notarization steps behind cred-presence checks; cannot produce or verify a signed
+  artifact). Flag to the user and start procuring early.
+- Branch: continue on `week6` (or cut `week11` off it). **Do NOT push to frozen production
   `lsast-handoff-2026-05-31` without explicit OK.**
-- ⚠️ Backend reminder if you re-run the eval: **OpenGrep ~85s/scan, rule-load bound** — a full 14-case
-  curated detector run is ~20 min; per-file probing validates new fixtures fast. Combined backend suite
-  is `manage.py test scanner local.api_app` (the app label is **`local.api_app`**, not `api_app`).
+- The instruct path is gated by `LLM_MODEL_MODE=instruct` (default FIM). The bundled GGUF is the Apache
+  Qwen2.5-Coder-7B-Instruct Q4_K_M (~4.7 GB); record app size in scorecard "W11".
 - Still open (pre-existing): `scripts/eval/tests/test_owasp.py` POSIX-path failure (out of scope).
-- **W6 carry:** the ≥40% wall-time number is still owed — run it on the infra box once the 7B host is up.
+- **Carry-overs still owed:** W6 ≥40% wall-time (needs a multi-slot model host); W8 CI never run on a
+  real GitHub runner; W10 live-scan visual confirmation (needs the 7B host).

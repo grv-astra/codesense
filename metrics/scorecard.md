@@ -358,3 +358,60 @@ coverage (C# + Kotlin curated pairs). Branch `week6` (off production tip `72b2de
 - Per-language detector eval runs, new langs non-zero recall: **PASS** (csharp/kotlin 1.000).
 - Registry well-formed (unique extensions, valid tiers): **PASS** (10 unit tests).
 - **Milestone: broader coverage, measured.**
+
+## Week 10 (Finding-details UX overhaul) — 2026-06-30
+
+Frontend-only week (React/TS, `client/`): the details view now consumes the W7 verdict
+metadata (`rule_id`/`confidence`/`verifier_reason`, live in the API since migration 0002).
+No backend, model, or Semgrep work. Branch `week6`.
+
+| Metric | Before | W10 | Acceptance |
+|---|---|---|---|
+| Client test harness | none (no runner) | **vitest + RTL + jsdom** (`npm test`) | a render test runs |
+| Details renders verifier verdict | no | **yes** (confidence %, reason, rule_id) | shown when present |
+| Details renders CWE reference link | cwe shown as text only | **yes** (`cwe.mitre.org/.../<n>.html`) | clickable link |
+| Graceful empty-field degradation | mitigation block always rendered | **guarded** (renders nothing when empty/null) | no crash on fail-open |
+| Component render test | — | **2/2 pass**; `tsc --noEmit` clean | test passes |
+
+### What shipped (code-complete, tests green)
+
+- **10.1 — `FindingDetails` extended** (`client/src/types/finding.ts`): optional
+  `rule_id?: string`, `confidence?: number | null`, `verifier_reason?: string`.
+  `confidence` is `number | null` to preserve fail-open/pre-W7 nulls (the serializer leaves
+  them null, not coalesced). `tsc --noEmit` clean. Commit `e2359fb`.
+- **10.2 — render the verdict** (`client/src/components/update/UpdatedFinding.tsx`):
+  - **Verifier Verdict** block — confidence as a rounded `%` + `verifier_reason` + `rule_id`,
+    guarded by `confidence != null` so fail-open (null/undefined) findings render nothing.
+  - **CWE Reference** link — `https://cwe.mitre.org/data/definitions/<n>.html`, with `<n>`
+    extracted deterministically from `finding.cwe` via regex (never LLM-authored).
+  - **Mitigation** (remediation) block now guarded by truthy `finding.mitigation` so empty
+    fail-open findings degrade gracefully (previously always rendered an empty block).
+  - Commit `6deda4c`.
+
+### Provenance & caveats
+
+- **Test harness stood up from scratch** — `client/` had no test runner (scripts were only
+  dev/build/lint/preview/start). Added `vitest`, `@testing-library/react`/`jest-dom`/`dom`,
+  and `jsdom` as devDeps; a `test` block in `vite.config.ts` (jsdom env, `src/test/setup.ts`
+  importing jest-dom matchers); and a `"test": "vitest run"` script. A trivial smoke test
+  confirmed the harness before the real test (smoke then removed).
+- **Render test** (`UpdatedFinding.test.tsx`, TDD): RED first (`/82%/` absent), then GREEN
+  after implementation. Asserts remediation + confidence `%` + verifier reason + the CWE
+  **link** (`getByRole('link', {name: /CWE-89/i})` → correct `href`) when present, and that
+  the component renders the title without crashing when `confidence`/`verifier_reason` are
+  `undefined` and `mitigation` is `""` (the fail-open shape). **2/2 pass.**
+- ⚠️ **Manual live-scan check is PENDING.** Acceptance step 10.2.5 (the details view shows the
+  new blocks against a real instruct-model scan) needs the 7B host + a live scan — not run
+  this session (frontend-only, model host down, same as the W6 wall-time owe). The render
+  test + `tsc` cover the component contract; the end-to-end visual confirmation is owed once a
+  live scan is available.
+- `cwe`/`severity`/`file_path`/`cvss` stay deterministic — the new blocks surface the LLM
+  verdict (confidence/reason) and a deterministic CWE link; nothing implies the LLM authored
+  the CWE/severity.
+
+### Status vs acceptance (W10)
+
+- Component render test passes: **PASS** (2/2, `tsc --noEmit` clean).
+- Renders the new blocks when fields present, nothing broken when empty: **PASS** (unit-proven).
+- Live-scan visual confirmation: **PENDING** (needs the model host).
+- **Milestone: richer triage UX.**
