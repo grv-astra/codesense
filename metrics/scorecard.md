@@ -415,3 +415,76 @@ No backend, model, or Semgrep work. Branch `week6`.
 - Renders the new blocks when fields present, nothing broken when empty: **PASS** (unit-proven).
 - Live-scan visual confirmation: **PENDING** (needs the model host).
 - **Milestone: richer triage UX.**
+
+## Week 11 (Signed/notarized distribution build) — 2026-06-30
+
+Packaging week: wire the shipped app to the **instruct** model + mid tier, make the bundled
+`llama-server` actually loadable on Windows, gate signing behind cred-presence, and exercise
+the real build pipeline on a Windows host. **No code-signing certs and no clean test VM this
+session** (confirmed with the user), so the signed-artifact + clean-VM acceptance is wired but
+not produced/verified — scope was scripts + docs + an *unsigned* on-host build attempt. Branch
+`week6`.
+
+| Metric | W1 baseline | W11 | Acceptance |
+|---|---|---|---|
+| Shipped app runs the instruct path | no (`LLM_MODEL_MODE` unset → FIM) | **yes** (`main.rs` sets `LLM_MODEL_MODE=instruct`) | instruct in the bundle |
+| Bundled `llama-server` can load its DLLs (Win) | no (only the 9 KB launcher staged) | **yes** (29 runtime DLLs staged + child `PATH` wired) | model server starts offline |
+| Model tier threaded through the build | no (fixed `astra.gguf`, tier unwired) | **yes** (`-ModelTier`/`MODEL_TIER`, default mid = Apache 7B) | mid-tier bundled |
+| Signed build OK | False | **False** (no cert this session; signing *wired*, see below) | True — established when certs land |
+| App size (GB) | 5.7 | **~4.8 (core AI payload, measured staged)** — see caveat | record |
+
+### What shipped (code + scripts, this session)
+
+- **`client/src-tauri/src/main.rs`** — (1) `spawn_backend` now sets `LLM_MODEL_MODE=instruct`
+  alongside `VLLM_MODEL`, so the frozen backend runs the instruction-tuned verifier/enricher
+  JSON path (not the legacy FIM path) in the shipped app. (2) `spawn_llama` prepends a staged
+  `resources/llama-runtime` dir to the child process `PATH` on Windows (`#[cfg(target_os =
+  "windows")]`) so the thin `llama-server.exe` launcher resolves its sibling DLLs.
+- **`scripts/build_windows.ps1`** — (1) stages every `*.dll` beside the provided
+  `-LlamaServer` into `resources\llama-runtime` (the launcher is a ~9 KB shim that dynamically
+  links `llama-server-impl.dll`/`llama.dll`/`ggml*.dll`/`mtmd.dll`/`libomp*`; without them the
+  bundled server cannot start). (2) `-ModelTier low|mid|high` (default mid), validated + logged
+  + size-stamped. (3) an Authenticode signing step (`signtool sign … /tr … ; verify /pa`) gated
+  on `-SigningCert`, password from `$env:WINDOWS_CERT_PASSWORD`; a no-op + warning when absent,
+  mirroring the macOS `APPLE_SIGNING_IDENTITY` gate. (4) **re-saved UTF-8 *with BOM*** — the
+  file was UTF-8-no-BOM and Windows PowerShell 5.1 (the only PS on the host; `#requires 5.1`)
+  mis-decodes its em-dashes as ANSI and **fails to parse the script** — a latent blocker to any
+  real build.
+- **`scripts/build_macos.sh`** — `MODEL_TIER` (default mid), validated + logged at model
+  staging, mirroring the Windows tier wiring.
+
+### Provenance & caveats (what was actually verified on this host)
+
+- **Build host = this Windows 11 box** (no clean VM). Toolchain present: Python 3.13, Node, Rust
+  `x86_64-pc-windows-msvc`, cargo. `makensis` absent (Tauri's NSIS bundler auto-fetches it).
+- **Backend freeze ✓** — `pyinstaller codesense.spec` produced
+  `server/dist/codesense-server.exe` (**28.7 MB**) cleanly. The PyInstaller "submodule" warnings
+  (psycopg2, `rest_framework.schemas`, settings-not-configured) are the usual frozen-Django
+  analysis noise, not errors.
+- **Heavy AI inputs present** — the Apache Qwen2.5-Coder-7B-Instruct Q4_K_M GGUF
+  (`astra-Q4_K_M.gguf`, **4.68 GB**) and a shared-lib Windows `llama-server.exe` + 29 runtime
+  DLLs (**46.2 MB**) in the sibling `astra-model-host/`.
+- ⚠️ **App size = staged-payload proxy, not an installed measurement.** The core AI payload
+  (model 4.68 GB + llama DLLs 46 MB + frozen backend 29 MB + OpenGrep/rules) ≈ **~4.8 GB**; the
+  full installed footprint adds the Grype CVE DB snapshot and (offline) the fixed WebView2
+  runtime, landing near the W1 5.7 GB. A precise installed number needs the completed NSIS
+  bundle (the multi-GB compress step) — see below.
+- ⚠️ **No signed artifact, no clean-VM acceptance.** Both are wired (macOS notarize via Tauri +
+  Apple env; Windows `signtool` via `-SigningCert`) but cannot be produced without (a) an Apple
+  Developer ID + notarization creds, (b) a Windows code-signing cert, and (c) per-OS clean test
+  VMs — none available this session. The install→launch→login→scan acceptance remains owed.
+- ⚠️ **WebView2.** `tauri.conf.json` pins a *fixed-version* WebView2 runtime, absent on this
+  host; the offline installer step hard-stops until that runtime is staged (`-WebView2`) or the
+  config is switched to the online `downloadBootstrapper`.
+
+### Status vs acceptance (W11)
+
+- Shipped app runs instruct + bundled `llama-server` loadable + mid tier wired: **PASS** (code).
+- Windows build pipeline exercised on-host: **PASS through compile** — backend freeze ✓
+  (`codesense-server.exe` 28.7 MB), frontend build ✓, Tauri Rust app compile + link ✓
+  (`codesense.exe` 11.87 MB on rustc 1.96), `resources/llama-runtime` DLLs registered as bundle
+  resources. The final **NSIS installer wrap was not produced** (no clean VM to accept it; multi-GB
+  GGUF makes it a long step) — app size below is a computed staged-payload proxy.
+- Signed DMG/EXE install+scan on a clean VM: **PENDING** (certs + VMs — hard blockers).
+- **Milestone: shippable installer — pipeline proven through compile; signing wired, not yet
+  signed/verified.**

@@ -200,33 +200,78 @@ Suite: **scanner+local.api_app 165 pass / 2 skip** + 6 curated eval tests; chara
   - ⚠️ **Live-scan visual confirmation PENDING** (plan step 10.2.5) — needs the 7B host + a real
     scan to eyeball the new blocks; not run this session (model host down, frontend-only week).
 
-## Next-week brief — Week 11: Signed/notarized distribution build (BLOCKED on certs + build host)
+## Phase 3 — W11 DONE on branch `week6` (committed locally, NOT pushed) — 2026-06-30
 
-**Goal:** a clean build produces an installer bundling the real OpenGrep binary, the Apache instruct
-model (mid tier), and the rules, that installs + runs + scans on a fresh machine with rule-name titles +
-verifier verdicts. **Acceptance:** DMG/EXE on a clean VM (no dev tools) installs, launches, logs in,
-completes a scan. Plan: `docs/superpowers/plans/...-phase3.md` (Week 11, ~line 118). **Build/packaging
-work, not feature code.**
+**W11 — signed/notarized distribution build.** Packaging/build week (no backend/frontend feature
+code). **Scope this session was deliberately scripts + docs + an *unsigned on-host build attempt*:**
+the user confirmed **no Apple cert, no Windows code-signing cert, and no clean test VM** — only this
+Windows 11 box as a build host. So the signing/notarization is **wired behind cred-presence checks**
+but **no signed artifact and no clean-VM install→scan acceptance was produced** (both remain owed,
+blocked on procurement).
+
+- **W11.1 launcher wiring** (`client/src-tauri/src/main.rs`): `spawn_backend` now sets
+  **`LLM_MODEL_MODE=instruct`** alongside `VLLM_MODEL` — the shipped app was defaulting to the legacy
+  **FIM** path; it now runs the instruct verifier/enricher JSON path. `spawn_llama` prepends a staged
+  **`resources/llama-runtime`** dir to the child `PATH` (`#[cfg(target_os = "windows")]`) so the thin
+  ~9 KB `llama-server.exe` launcher resolves its sibling DLLs.
+- **W11.2 Windows build** (`scripts/build_windows.ps1`): (1) stages **every `*.dll`** beside the
+  provided `-LlamaServer` into `resources\llama-runtime` (it previously staged only the launcher → the
+  bundled model server could not start); (2) **`-ModelTier low|mid|high`** (default mid = Apache 7B),
+  validated + logged + size-stamped (mirrors `model_tiers.py`); (3) an **Authenticode signing step**
+  (`signtool sign … /tr … ; verify /pa`) gated on `-SigningCert`, password from
+  `$env:WINDOWS_CERT_PASSWORD`, no-op + warning when absent (mirrors the macOS `APPLE_SIGNING_IDENTITY`
+  gate); (4) **re-saved UTF-8 *with BOM*** — the file was UTF-8-no-BOM and **Windows PowerShell 5.1**
+  (the only PS on the host; `#requires 5.1`) mis-decodes its em-dashes as ANSI and **fails to parse the
+  script** — a latent blocker to any real Windows build, now fixed. `scripts/build_macos.sh` gained the
+  matching `MODEL_TIER` wiring.
+- **On-host build attempt (this Windows box, no clean VM):** verified the pipeline through every stage
+  **except the final NSIS wrap**:
+  - **Backend freeze ✓** — `pyinstaller codesense.spec` → `server/dist/codesense-server.exe` (**28.7 MB**).
+  - **Frontend build ✓** + **Tauri Rust app compile + link ✓** — `tauri build` produced
+    `target/release/codesense.exe` (**11.87 MB**); the build log confirmed the `resources/llama-runtime`
+    DLLs registered as bundle resources. My `main.rs` edits compile clean on **rustc 1.96**.
+  - ⚠️ **Toolchain gotcha (fixed):** the host's **rustc 1.85.1** was too old for current Tauri deps
+    (`darling`/`icu_*`/`image`/`serde_with`/`time` need 1.86–1.88); `rustup update stable` → **1.96.0**
+    unblocked it. *(The global toolchain on this machine was updated as a build-host setup step.)*
+  - ⚠️ **WebView2:** `tauri.conf.json` pins a **fixed-version WebView2 runtime** (absent here), which
+    Tauri's codegen validates even with `--no-bundle`. The compile was unblocked by **temporarily**
+    switching to `downloadBootstrapper`; the config was **reverted to `fixedRuntime`** before commit
+    (the committed app stays fully-offline). A full installer needs that runtime staged (`-WebView2`)
+    or that config switch.
+  - **NSIS installer + app size:** the final multi-GB NSIS wrap was **not produced** (no clean VM to
+    accept it; an installer over the 4.68 GB GGUF is a long step). App size recorded in
+    `metrics/scorecard.md` W11 as a **computed staged-payload proxy (~4.8 GB core AI payload)**, not an
+    installed measurement.
+- **Still owed (carried to W12):** a **signed** DMG/EXE + clean-VM install→scan (blocked on Apple cert,
+  Windows cert, per-OS VMs); W6 ≥40% wall-time, W8 CI on a real runner, W10 live-scan visual (all need a
+  live 7B host). See `metrics/scorecard.md` W11.
+
+## Next-week brief — Week 12: Harden + measure results
+
+**Goal:** measure the 12-week outcomes against the W1 baseline and document them; fix the top 1–2
+regressions. **Acceptance:** `metrics/RESULTS.md` shows the before/after scorecard with §9 targets met
+(or documented gaps); `manage.py test scanner local.api_app` green; the eval gate green. Plan:
+`docs/superpowers/plans/...-phase3.md` (Week 12, ~line 151). **Measurement + hardening, not feature code.**
 
 **Tasks:**
-1. **11.1 — macOS signed/notarized DMG** (`scripts/build_macos.sh`): confirm model staging targets the
-   chosen tier GGUF (`MODEL_GGUF`/`MODEL_TIER`) and that `LLM_MODEL_MODE=instruct` is set in the Tauri
-   launcher env (`client/src-tauri/src/main.rs`, alongside `VLLM_MODEL`). Build with
-   `APPLE_SIGNING_IDENTITY`/`APPLE_ID`/`APPLE_PASSWORD`/`APPLE_TEAM_ID` → `.dmg`; `codesign --verify
-   --deep --strict` + `xcrun stapler validate` OK.
-2. **11.2 — Windows EXE** (`scripts/build_windows.ps1`): mirror the model/mode wiring; produce the
-   installer with `semgrep.exe` (real OpenGrep, already fixed) + the model + rules.
+1. **12.1 — re-run the full scorecard** — re-measure every axis (detector + verifier Tier-2 +
+   enrichment parse-rate + DVB scan wall-time + build/app-size) with the W11 build/model, rendered via
+   `scripts/eval/scorecard.py` (`render_scorecard`). A **live 7B-Instruct host** clears the long-owed
+   model-bound rows (W6 ≥40% wall-time, per-finding latency, W10 live-scan visual).
+2. **12.2 — write `metrics/RESULTS.md`** — a W1→W12 before/after table per metric + the §9 thresholds +
+   pass/fail, then a short narrative (what improved, what's still open, next-quarter recommendation).
+3. **12.3 — final hardening** — fix the top 1–2 regressions surfaced (each TDD: failing test → fix →
+   green → commit); update `CLAUDE.md` to "roadmap complete"; write release notes.
 
-**Environment notes / blockers (carry forward):**
-- ⛔ **BLOCKED — needs procurement before W11 can fully land:** (a) an **Apple Developer ID Application**
-  signing cert + notarization credentials, (b) a **Windows code-signing cert**, and (c) a **build host**
-  for each OS (macOS for the DMG, Windows for the EXE). **Without these, W11 = the scripts + docs only**
-  (wire the signing/notarization steps behind cred-presence checks; cannot produce or verify a signed
-  artifact). Flag to the user and start procuring early.
-- Branch: continue on `week6` (or cut `week11` off it). **Do NOT push to frozen production
-  `lsast-handoff-2026-05-31` without explicit OK.**
-- The instruct path is gated by `LLM_MODEL_MODE=instruct` (default FIM). The bundled GGUF is the Apache
-  Qwen2.5-Coder-7B-Instruct Q4_K_M (~4.7 GB); record app size in scorecard "W11".
-- Still open (pre-existing): `scripts/eval/tests/test_owasp.py` POSIX-path failure (out of scope).
-- **Carry-overs still owed:** W6 ≥40% wall-time (needs a multi-slot model host); W8 CI never run on a
-  real GitHub runner; W10 live-scan visual confirmation (needs the 7B host).
+**Environment notes / carry-overs (still owed):**
+- **W11 signed artifact + clean-VM acceptance** remain **blocked on procurement:** (a) an Apple
+  Developer ID + notarization creds, (b) a Windows code-signing cert, (c) per-OS clean test VMs. The
+  signing/notarization steps are **wired** (macOS via Tauri/Apple env; Windows via `signtool` behind
+  `-SigningCert`) — they only need the creds + a VM to produce and verify a real install→scan.
+- The instruct path now ships by default in the app (`main.rs` sets `LLM_MODEL_MODE=instruct`); the
+  bundled GGUF is the Apache Qwen2.5-Coder-7B-Instruct Q4_K_M (~4.68 GB).
+- **Model-host-bound owes (clear them in W12 with a live multi-slot 7B host):** W6 ≥40% wall-time;
+  W8 CI never run on a real GitHub runner; W10 live-scan visual confirmation.
+- Pre-existing, out of scope: `scripts/eval/tests/test_owasp.py` POSIX-path failure.
+- Branch: continue on `week6` (or cut `week12` off it). **Do NOT push to frozen production
+  `lsast-handoff-2026-05-31` without explicit OK.** The stacked W9/W10/W11 commits are local-only.

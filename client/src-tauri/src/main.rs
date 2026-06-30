@@ -55,6 +55,11 @@ fn spawn_backend(app: &tauri::AppHandle) -> Option<CommandChild> {
         .env("VLLM_BASE_URL", format!("http://127.0.0.1:{LLAMA_PORT}/v1"))
         .env("VLLM_MODEL", "astra-code-reviewer")
         .env("VLLM_API_KEY", "EMPTY")
+        // Ship the instruction-tuned (Apache-2.0 Qwen2.5-Coder-Instruct) path, not
+        // the legacy FIM one: the bundled GGUF is the instruct model and the
+        // verifier/enricher emit/parse JSON only under instruct mode. Without this
+        // the backend defaults to LLM_MODEL_MODE=fim (see llm.py::model_mode).
+        .env("LLM_MODEL_MODE", "instruct")
         .env("SCANNER_TOOLS_DIR", tools_dir.to_string_lossy().to_string())
         .env("GRYPE_DB_CACHE_DIR", grype_db.to_string_lossy().to_string())
         .env("SEMGREP_BIN", tools_dir.join("semgrep").to_string_lossy().to_string())
@@ -95,7 +100,7 @@ fn spawn_llama(app: &tauri::AppHandle) -> Option<CommandChild> {
         .path()
         .resolve("resources/model/astra.gguf", BaseDirectory::Resource)
         .ok()?;
-    let cmd = app
+    let mut cmd = app
         .shell()
         .sidecar("llama-server")
         .ok()?
@@ -113,6 +118,24 @@ fn spawn_llama(app: &tauri::AppHandle) -> Option<CommandChild> {
             "--api-key",
             "EMPTY",
         ]);
+
+    // The Windows llama-server.exe is a thin (~9KB) launcher that dynamically
+    // links its runtime DLLs (llama-server-impl.dll, llama.dll, ggml*.dll,
+    // mtmd.dll, libomp*). The build stages those into resources/llama-runtime/;
+    // the sidecar exe lives at the install root, so the DLLs are NOT beside it.
+    // Prepend the runtime dir to the child's PATH so the loader resolves them.
+    // No-op on macOS (single Metal binary; the dir is absent there).
+    #[cfg(target_os = "windows")]
+    if let Ok(runtime) = app
+        .path()
+        .resolve("resources/llama-runtime", BaseDirectory::Resource)
+    {
+        if runtime.is_dir() {
+            let prev = std::env::var("PATH").unwrap_or_default();
+            cmd = cmd.env("PATH", format!("{};{}", runtime.to_string_lossy(), prev));
+        }
+    }
+
     cmd.spawn().map(|(_rx, child)| child).ok()
 }
 

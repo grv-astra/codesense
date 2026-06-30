@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
 .SYNOPSIS
   One-command Windows build for the Code Sense offline desktop app.
@@ -17,10 +17,17 @@
     -LlamaServer  llama-server.exe    (a llama.cpp Windows release)
 
 .PARAMETER ModelGguf   Path to the GGUF model file (copied into the bundle as astra.gguf).
-.PARAMETER LlamaServer Path to llama-server.exe.
+.PARAMETER ModelTier   Device tier the bundled model targets: low|mid|high (default mid = the
+                       Apache Qwen2.5-Coder-7B-Instruct). Recorded/logged; the actual source file
+                       is -ModelGguf (explicit wins). Mirrors server\scanner\rag\model_tiers.py.
+.PARAMETER LlamaServer Path to llama-server.exe. Its sibling runtime DLLs (ggml*/llama*/mtmd/libomp)
+                       are auto-staged into resources\llama-runtime so the bundled launcher can load.
 .PARAMETER WebView2    Path to a fixed-version WebView2 runtime folder (for a fully-offline installer).
 .PARAMETER IconLogo    Square PNG used to generate app icons; defaults to client\public\CSlogo.png.
 .PARAMETER SkipTools   Skip downloading the SBOM tools (use what's already staged).
+.PARAMETER SigningCert Path to an Authenticode code-signing cert (.pfx). When set (and the SDK's
+                       signtool is on PATH) the produced installer is signed; the .pfx password is
+                       read from $env:WINDOWS_CERT_PASSWORD. Omit for an unsigned local build.
 
 .EXAMPLE
   .\scripts\build_windows.ps1 `
@@ -31,10 +38,13 @@
 [CmdletBinding()]
 param(
   [string]$ModelGguf,
+  [ValidateSet("low", "mid", "high")]
+  [string]$ModelTier = "mid",
   [string]$LlamaServer,
   [string]$WebView2,
   [string]$IconLogo,
-  [switch]$SkipTools
+  [switch]$SkipTools,
+  [string]$SigningCert
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,6 +61,7 @@ $Tauri      = Join-Path $Client "src-tauri"
 $BinDir     = Join-Path $Tauri "binaries"
 $ResTools   = Join-Path $Tauri "resources\tools"
 $ResModel   = Join-Path $Tauri "resources\model"
+$ResLlamaRt = Join-Path $Tauri "resources\llama-runtime"
 $ResGrypeDb = Join-Path $Tauri "resources\grype-db"
 $Wv2Dir     = Join-Path $Tauri "webview2"
 
@@ -85,7 +96,7 @@ $hostLine = (& rustc -Vv | Select-String '^host:' | Select-Object -First 1)
 if (-not $hostLine) { Die "Could not determine the Rust host triple from 'rustc -Vv'." }
 $Triple = $hostLine.ToString().Split(' ')[-1].Trim()
 Ok "Rust target triple: $Triple"
-Ensure-Dir $BinDir; Ensure-Dir $ResTools; Ensure-Dir $ResModel; Ensure-Dir $ResGrypeDb
+Ensure-Dir $BinDir; Ensure-Dir $ResTools; Ensure-Dir $ResModel; Ensure-Dir $ResLlamaRt; Ensure-Dir $ResGrypeDb
 
 # --------------------------------------------------------------------------- #
 # 1. Backend -> codesense-server.exe (PyInstaller)
@@ -113,15 +124,32 @@ if (-not $LlamaServer -or -not (Test-Path $LlamaServer)) {
 Copy-Item $LlamaServer (Join-Path $BinDir "llama-server-$Triple.exe") -Force
 Ok "llama-server-$Triple.exe staged"
 
+# A shared-library llama.cpp build ships llama-server.exe as a thin launcher that
+# dynamically links its runtime DLLs (llama-server-impl.dll, llama.dll,
+# llama-common.dll, ggml*.dll, mtmd.dll, libomp*). Tauri places the sidecar exe at
+# the install ROOT, so those DLLs must travel too; stage every *.dll sitting beside
+# llama-server.exe into resources\llama-runtime, which the launcher prepends to the
+# child PATH (see client\src-tauri\src\main.rs::spawn_llama). A single-file static
+# build has no sibling DLLs and this simply stages nothing.
+$LlamaSrcDir = Split-Path -Parent (Resolve-Path $LlamaServer)
+$llamaDlls = @(Get-ChildItem -Path $LlamaSrcDir -Filter *.dll -File -ErrorAction SilentlyContinue)
+if ($llamaDlls.Count -gt 0) {
+  foreach ($dll in $llamaDlls) { Copy-Item $dll.FullName (Join-Path $ResLlamaRt $dll.Name) -Force }
+  Ok "$($llamaDlls.Count) llama runtime DLL(s) staged into resources\llama-runtime"
+} else {
+  Info "No sibling DLLs next to llama-server.exe (assuming a static build)."
+}
+
 # --------------------------------------------------------------------------- #
 # 3. Model GGUF (provided)
 # --------------------------------------------------------------------------- #
-Info "Staging model GGUF"
+Info "Staging model GGUF (tier: $ModelTier)"
 if (-not $ModelGguf -or -not (Test-Path $ModelGguf)) {
-  Die "Pass -ModelGguf <path to the .gguf model> (see scripts/offline_ai/)."
+  Die "Pass -ModelGguf <path to the .gguf model> (see scripts/offline_ai/). Target tier '$ModelTier' (mid = Apache 7B-Instruct)."
 }
 Copy-Item $ModelGguf (Join-Path $ResModel "astra.gguf") -Force
-Ok "model staged as resources\model\astra.gguf"
+$gb = [math]::Round((Get-Item $ModelGguf).Length / 1GB, 2)
+Ok "model ($ModelTier tier, $gb GB) staged as resources\model\astra.gguf"
 
 # --------------------------------------------------------------------------- #
 # 4. SBOM tools (Syft / Grype / Grant / Cosign) - latest releases via GitHub API
@@ -257,9 +285,65 @@ try {
 } finally { Pop-Location }
 
 $bundle = Join-Path $Tauri "target\release\bundle\nsis"
-Info "Build complete"
+$installers = @()
 if (Test-Path $bundle) {
-  Get-ChildItem $bundle -Filter *.exe | ForEach-Object { Ok "Installer: $($_.FullName)" }
+  $installers = @(Get-ChildItem $bundle -Filter *.exe -File)
+}
+
+# --------------------------------------------------------------------------- #
+# 9. Authenticode sign the installer (only when a cert is supplied)
+# --------------------------------------------------------------------------- #
+# Mirrors the macOS APPLE_SIGNING_IDENTITY gate: with no cert this is a no-op +
+# warning, so an unsigned local/CI build still completes. signtool ships with the
+# Windows SDK; it is usually not on PATH, so fall back to the newest copy under
+# Program Files. Password comes from $env:WINDOWS_CERT_PASSWORD (never a param, so
+# it stays out of the process table / history).
+function Find-SignTool {
+  $cmd = Get-Command signtool.exe -ErrorAction SilentlyContinue
+  if ($cmd) { return $cmd.Source }
+  $roots = @("${env:ProgramFiles(x86)}\Windows Kits\10\bin", "$env:ProgramFiles\Windows Kits\10\bin")
+  foreach ($root in $roots) {
+    if (Test-Path $root) {
+      $found = Get-ChildItem $root -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+               Where-Object { $_.FullName -match '\\x64\\' } |
+               Sort-Object FullName -Descending | Select-Object -First 1
+      if ($found) { return $found.FullName }
+    }
+  }
+  return $null
+}
+
+if ($SigningCert) {
+  Info "Signing the installer (Authenticode)"
+  if (-not (Test-Path $SigningCert)) { Die "Signing cert not found: $SigningCert" }
+  if ($installers.Count -eq 0) { Die "No installer to sign (NSIS bundle missing)." }
+  $signtool = Find-SignTool
+  if (-not $signtool) { Die "signtool.exe not found. Install the Windows 10/11 SDK (Signing Tools)." }
+  if (-not $env:WINDOWS_CERT_PASSWORD) {
+    Write-Warning "WINDOWS_CERT_PASSWORD not set; signtool will prompt or fail for a password-protected .pfx."
+  }
+  foreach ($inst in $installers) {
+    $signArgs = @("sign", "/fd", "SHA256", "/tr", "http://timestamp.digicert.com", "/td", "SHA256",
+                  "/f", $SigningCert)
+    if ($env:WINDOWS_CERT_PASSWORD) { $signArgs += @("/p", $env:WINDOWS_CERT_PASSWORD) }
+    $signArgs += $inst.FullName
+    Invoke-Native { & $signtool @signArgs } "signtool sign $($inst.Name)"
+    Invoke-Native { & $signtool verify /pa $inst.FullName } "signtool verify $($inst.Name)"
+    Ok "Signed + verified: $($inst.Name)"
+  }
+} else {
+  Write-Warning "No -SigningCert supplied: installer is UNSIGNED. SmartScreen will warn users on first run."
+}
+
+# --------------------------------------------------------------------------- #
+# 10. Report
+# --------------------------------------------------------------------------- #
+Info "Build complete"
+if ($installers.Count -gt 0) {
+  foreach ($inst in $installers) {
+    $sizeMb = [math]::Round($inst.Length / 1MB, 1)
+    Ok "Installer: $($inst.FullName) ($sizeMb MB)"
+  }
 } else {
   Write-Warning "NSIS bundle dir not found at $bundle - check the Tauri build output above."
 }

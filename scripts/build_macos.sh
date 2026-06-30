@@ -36,6 +36,7 @@ set -euo pipefail
 # Inputs
 # --------------------------------------------------------------------------- #
 MODEL_GGUF="${MODEL_GGUF:-}"
+MODEL_TIER="${MODEL_TIER:-mid}"   # low|mid|high; mid = Apache 7B-Instruct. See server/scanner/rag/model_tiers.py.
 LLAMA_SERVER="${LLAMA_SERVER:-}"
 ICON_LOGO="${ICON_LOGO:-}"
 SKIP_TOOLS="${SKIP_TOOLS:-0}"
@@ -112,11 +113,12 @@ ok "llama-server-$TRIPLE staged"
 # --------------------------------------------------------------------------- #
 # 3. Model GGUF (provided)
 # --------------------------------------------------------------------------- #
-info "Staging model GGUF"
+info "Staging model GGUF (tier: $MODEL_TIER)"
+case "$MODEL_TIER" in low|mid|high) ;; *) die "MODEL_TIER must be low|mid|high (got '$MODEL_TIER')." ;; esac
 [ -n "$MODEL_GGUF" ] && [ -f "$MODEL_GGUF" ] || \
-  die "Set MODEL_GGUF=<path to astra-Q4_K_M.gguf> (see scripts/offline_ai/)."
+  die "Set MODEL_GGUF=<path to astra-Q4_K_M.gguf> (see scripts/offline_ai/). Target tier '$MODEL_TIER' (mid = Apache 7B-Instruct)."
 cp "$MODEL_GGUF" "$RES_MODEL/astra.gguf"
-ok "astra.gguf staged"
+ok "astra.gguf staged ($MODEL_TIER tier)"
 
 # --------------------------------------------------------------------------- #
 # 4. SBOM tools (Syft / Grype / Grant / Cosign, darwin/arm64)
