@@ -20,6 +20,9 @@ export interface FindingDetails {
   created_at: string;
   updated_at?: string; // Optional since it wasn't in the provided schema
   flow_diagram?: string[];
+  rule_id?: string; // W7: Semgrep rule id ("" when absent)
+  confidence?: number | null; // W7: verifier confidence 0..1 (null on pre-W7 / fail-open rows)
+  verifier_reason?: string; // W7: LLM verifier rationale ("" when absent)
 }
 
 export interface CreateFindingDetails {
