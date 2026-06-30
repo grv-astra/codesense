@@ -98,6 +98,14 @@ function Finding({ finding }: FindingProps) {
     return cleanCode;
   }
 
+  // Extract the numeric id from a deterministic CWE label (e.g. "CWE-89 - SQLi" -> "89")
+  // so we can build a canonical cwe.mitre.org reference link.
+  const cweNumber = (cwe?: string): string | null => {
+    const match = cwe?.match(/CWE[-\s]?(\d+)/i);
+    return match ? match[1] : null;
+  }
+  const cweNum = cweNumber(currentFinding.cwe);
+
    const renderFlowDiagram = (steps: string[]) => {
     if (!steps || steps.length === 0) return null;
 
@@ -237,17 +245,62 @@ function Finding({ finding }: FindingProps) {
               </div>
             </div>
 
-            {/* Mitigation */}
+            {/* Mitigation (LLM remediation — empty on fail-open findings) */}
+            {currentFinding.mitigation && (
+              <div className="bg-gray-500/10 dark:bg-gray-500/20 rounded-lg p-4 border border-gray-200 dark:border-gray-500/40">
+                <h3 className="text-lg font-semibold mb-3 flex items-center gap-2 text-gray-900 dark:text-[#e5e5e5]">
+                  <Shield className="w-5 h-5 text-primary" />
+                  Mitigation Steps
+                </h3>
+                <div className="space-y-2 text-gray-700 dark:text-gray-300">
+                  {formatMitigation(currentFinding.mitigation)}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Verifier Verdict (LLM confidence + reason; null = fail-open, render nothing) */}
+          {currentFinding.confidence != null && (
             <div className="bg-gray-500/10 dark:bg-gray-500/20 rounded-lg p-4 border border-gray-200 dark:border-gray-500/40">
               <h3 className="text-lg font-semibold mb-3 flex items-center gap-2 text-gray-900 dark:text-[#e5e5e5]">
-                <Shield className="w-5 h-5 text-primary" />
-                Mitigation Steps
+                <CheckCircle className="w-5 h-5 text-primary" />
+                Verifier Verdict
               </h3>
               <div className="space-y-2 text-gray-700 dark:text-gray-300">
-                {formatMitigation(currentFinding.mitigation)}
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-600 dark:text-gray-300">Confidence:</span>
+                  <span className="font-semibold">{Math.round(currentFinding.confidence * 100)}%</span>
+                </div>
+                {currentFinding.verifier_reason && (
+                  <p className="leading-relaxed">{currentFinding.verifier_reason}</p>
+                )}
+                {currentFinding.rule_id && (
+                  <code className="text-primary bg-gray-300 dark:bg-gray-900/50 px-2 py-1 rounded text-xs">
+                    {currentFinding.rule_id}
+                  </code>
+                )}
               </div>
             </div>
-          </div>
+          )}
+
+          {/* CWE Reference (deterministic link derived from finding.cwe) */}
+          {cweNum && (
+            <div className="bg-gray-500/10 dark:bg-gray-500/20 rounded-lg p-4 border border-gray-200 dark:border-gray-500/40">
+              <h3 className="text-lg font-semibold mb-3 flex items-center gap-2 text-gray-900 dark:text-[#e5e5e5]">
+                <ExternalLink className="w-5 h-5 text-primary" />
+                CWE Reference
+              </h3>
+              <a
+                href={`https://cwe.mitre.org/data/definitions/${cweNum}.html`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-red-600 hover:text-red-800 underline flex items-center gap-1"
+              >
+                {currentFinding.cwe}
+                <ExternalLink className="w-4 h-4" />
+              </a>
+            </div>
+          )}
 
           {/* Reference Link */}
           {currentFinding.reference && (
