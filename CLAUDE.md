@@ -238,10 +238,14 @@ blocked on procurement).
     switching to `downloadBootstrapper`; the config was **reverted to `fixedRuntime`** before commit
     (the committed app stays fully-offline). A full installer needs that runtime staged (`-WebView2`)
     or that config switch.
-  - **NSIS installer + app size:** the final multi-GB NSIS wrap was **not produced** (no clean VM to
-    accept it; an installer over the 4.68 GB GGUF is a long step). App size recorded in
-    `metrics/scorecard.md` W11 as a **computed staged-payload proxy (~4.8 GB core AI payload)**, not an
-    installed measurement.
+  - **NSIS installer — BLOCKED on a 32-bit makensis limit (new finding).** The full `tauri build`
+    reached makensis (NSIS 3.11, auto-fetched) and aborted: `File: failed creating mmap of
+    …\astra.gguf` (`installer.nsi:672`). Tauri's NSIS bundler mmaps every resource and 32-bit makensis
+    **cannot mmap a ~2 GB+ file** — the **4.68 GB** 7B GGUF exceeds it. Mitigations (decide W12, see
+    `metrics/scorecard.md` "W11 NSIS large-file limit"): ship the **low-tier 1.5B (~1 GB, fits)** in the
+    EXE — the `-ModelTier` wiring this week exists for exactly this; or split the GGUF into <2 GB shards;
+    or switch the Windows target to WiX/MSI; or first-run fetch. macOS `.dmg` has no such limit. App
+    size in `metrics/scorecard.md` W11 is a **computed staged-payload proxy (~4.8 GB)**, not installed.
 - **Still owed (carried to W12):** a **signed** DMG/EXE + clean-VM install→scan (blocked on Apple cert,
   Windows cert, per-OS VMs); W6 ≥40% wall-time, W8 CI on a real runner, W10 live-scan visual (all need a
   live 7B host). See `metrics/scorecard.md` W11.
@@ -270,6 +274,9 @@ regressions. **Acceptance:** `metrics/RESULTS.md` shows the before/after scoreca
   `-SigningCert`) — they only need the creds + a VM to produce and verify a real install→scan.
 - The instruct path now ships by default in the app (`main.rs` sets `LLM_MODEL_MODE=instruct`); the
   bundled GGUF is the Apache Qwen2.5-Coder-7B-Instruct Q4_K_M (~4.68 GB).
+- **NSIS cannot bundle the 4.68 GB 7B model** (32-bit makensis ~2 GB mmap limit — W11 on-host finding).
+  Decide the Windows strategy: low-tier 1.5B in the EXE (`-ModelTier low`, fits) / split-GGUF / WiX-MSI
+  / first-run fetch. See `metrics/scorecard.md` "W11 NSIS large-file limit". macOS `.dmg` is unaffected.
 - **Model-host-bound owes (clear them in W12 with a live multi-slot 7B host):** W6 ≥40% wall-time;
   W8 CI never run on a real GitHub runner; W10 live-scan visual confirmation.
 - Pre-existing, out of scope: `scripts/eval/tests/test_owasp.py` POSIX-path failure.

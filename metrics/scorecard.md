@@ -480,11 +480,34 @@ not produced/verified — scope was scripts + docs + an *unsigned* on-host build
 ### Status vs acceptance (W11)
 
 - Shipped app runs instruct + bundled `llama-server` loadable + mid tier wired: **PASS** (code).
-- Windows build pipeline exercised on-host: **PASS through compile** — backend freeze ✓
-  (`codesense-server.exe` 28.7 MB), frontend build ✓, Tauri Rust app compile + link ✓
-  (`codesense.exe` 11.87 MB on rustc 1.96), `resources/llama-runtime` DLLs registered as bundle
-  resources. The final **NSIS installer wrap was not produced** (no clean VM to accept it; multi-GB
-  GGUF makes it a long step) — app size below is a computed staged-payload proxy.
+- Windows build pipeline exercised on-host: **PASS through compile; NSIS wrap BLOCKED on a 32-bit
+  makensis limit** — backend freeze ✓ (`codesense-server.exe` 28.7 MB), frontend build ✓, Tauri Rust
+  app compile + link ✓ (`codesense.exe` 11.87 MB on rustc 1.96), `resources/llama-runtime` DLLs
+  registered as bundle resources, makensis 3.11 auto-fetched + ran. **The NSIS bundle then failed:
+  `File: failed creating mmap of …\astra.gguf`** (installer.nsi:672) — Tauri's NSIS bundler
+  memory-maps each resource and the 32-bit makensis cannot mmap the **4.68 GB** GGUF (the well-known
+  ~2 GB/file NSIS limit). See the W11 NSIS-limit note below for mitigations. App size below is a
+  computed staged-payload proxy (no installer produced).
 - Signed DMG/EXE install+scan on a clean VM: **PENDING** (certs + VMs — hard blockers).
 - **Milestone: shippable installer — pipeline proven through compile; signing wired, not yet
   signed/verified.**
+
+### W11 NSIS large-file limit (on-host finding — actionable for W12/packaging)
+
+The full `tauri build` got all the way to **makensis** (NSIS 3.11, auto-fetched) and then aborted:
+`File: failed creating mmap of "…\resources\model\astra.gguf"` (`installer.nsi:672`). Tauri's NSIS
+bundler **memory-maps every bundled resource**, and the shipped **32-bit makensis cannot mmap a file
+of ~2 GB+**; the mid-tier **4.68 GB** GGUF blows past it. This is a **hard blocker for an NSIS
+installer that embeds the 7B model** — independent of certs/VM. Options (decide in W12):
+
+1. **Ship the low tier in the NSIS installer.** The `MODEL_TIER=low` 1.5B GGUF (~1 GB, wired this
+   week) is **under the 2 GB mmap limit**, so it bundles cleanly — the pragmatic default for a
+   single-file offline EXE. (The mid/high tiers then need one of the below.)
+2. **Split the GGUF into <2 GB shards** (`llama-gguf-split`) staged as separate resources, reassembled
+   on first run — keeps one offline installer for the 7B.
+3. **Switch the Windows target to WiX/MSI** (Tauri `msi`), which does not have the makensis mmap
+   limit, or deliver the model as a separate sidecar payload alongside the EXE.
+4. **First-run model fetch** — smallest installer, but breaks the fully-offline guarantee.
+
+The macOS `.dmg` path (hdiutil/Tauri) has **no equivalent 2 GB limit**, so the 7B bundles there; this
+is Windows/NSIS-specific.
