@@ -62,7 +62,17 @@ fn spawn_backend(app: &tauri::AppHandle) -> Option<CommandChild> {
         .env("LLM_MODEL_MODE", "instruct")
         .env("SCANNER_TOOLS_DIR", tools_dir.to_string_lossy().to_string())
         .env("GRYPE_DB_CACHE_DIR", grype_db.to_string_lossy().to_string())
-        .env("SEMGREP_BIN", tools_dir.join("semgrep").to_string_lossy().to_string())
+        // Windows Semgrep/OpenGrep is `semgrep.exe`; the backend's SEMGREP_BIN
+        // override is used verbatim (it does NOT append an extension — only the
+        // SCANNER_TOOLS_DIR fallback does), so the ext must be correct here or the
+        // packaged Windows app can't launch the engine and scans find nothing.
+        .env(
+            "SEMGREP_BIN",
+            tools_dir
+                .join(if cfg!(target_os = "windows") { "semgrep.exe" } else { "semgrep" })
+                .to_string_lossy()
+                .to_string(),
+        )
         .env(
             "SEMGREP_RULES_DIR",
             app.path()

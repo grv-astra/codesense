@@ -23,6 +23,13 @@ hiddenimports = []
 for pkg in _APPS:
     hiddenimports += collect_submodules(pkg)
 
+# Third-party packages referenced ONLY by dotted string in settings (never by a
+# real `import`), so PyInstaller's static import tracer misses them and the frozen
+# backend crashes at startup. whitenoise: STATICFILES_STORAGE + the WhiteNoise
+# middleware -> ModuleNotFoundError at collectstatic. Collect them explicitly.
+for pkg in ("whitenoise",):
+    hiddenimports += collect_submodules(pkg)
+
 # The local apps expose routes as urls/ PACKAGES whose __init__ include()s DRF
 # sub-urlconfs by string (e.g. local.api_app.urls.scan_urls). Those submodules read
 # Django settings at import time, so collect_submodules (which imports each module
