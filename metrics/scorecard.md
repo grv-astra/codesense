@@ -480,14 +480,20 @@ not produced/verified — scope was scripts + docs + an *unsigned* on-host build
 ### Status vs acceptance (W11)
 
 - Shipped app runs instruct + bundled `llama-server` loadable + mid tier wired: **PASS** (code).
-- Windows build pipeline exercised on-host: **PASS through compile; NSIS wrap BLOCKED on a 32-bit
-  makensis limit** — backend freeze ✓ (`codesense-server.exe` 28.7 MB), frontend build ✓, Tauri Rust
-  app compile + link ✓ (`codesense.exe` 11.87 MB on rustc 1.96), `resources/llama-runtime` DLLs
-  registered as bundle resources, makensis 3.11 auto-fetched + ran. **The NSIS bundle then failed:
-  `File: failed creating mmap of …\astra.gguf`** (installer.nsi:672) — Tauri's NSIS bundler
-  memory-maps each resource and the 32-bit makensis cannot mmap the **4.68 GB** GGUF (the well-known
-  ~2 GB/file NSIS limit). See the W11 NSIS-limit note below for mitigations. App size below is a
-  computed staged-payload proxy (no installer produced).
+- Windows build pipeline exercised on-host: **PASS through compile + LIVE RUN; NSIS wrap BLOCKED on a
+  32-bit makensis limit** — backend freeze ✓ (`codesense-server.exe` 28.7 MB), frontend build ✓, Tauri
+  Rust app compile + link ✓ (`codesense.exe` 11.87 MB on rustc 1.96). **The built app was then run
+  from a mirrored install layout and verified live:** it launches, spawns the backend on
+  127.0.0.1:8585, Django routes resolve (`/admin/`→302) and WhiteNoise serves static
+  (`/static/admin/css/base.css`→200). Running it **surfaced + fixed two Windows-only bugs** (never hit
+  on the macOS-only prior builds): (a) the launcher set `SEMGREP_BIN` with **no `.exe`** so the
+  packaged scanner couldn't find OpenGrep (fix: cfg-conditional `semgrep.exe`); (b) the PyInstaller
+  spec didn't collect **`whitenoise`** (referenced only by string in settings) so the frozen backend
+  **crashed at startup** on `collectstatic` (fix: `collect_submodules("whitenoise")`). **The NSIS
+  bundle then failed: `File: failed creating mmap of …\astra.gguf`** (installer.nsi:672) — Tauri's
+  NSIS bundler memory-maps each resource and the 32-bit makensis cannot mmap the **4.68 GB** GGUF (the
+  well-known ~2 GB/file NSIS limit). See the W11 NSIS-limit note below. App size below is a computed
+  staged-payload proxy (no installer produced).
 - Signed DMG/EXE install+scan on a clean VM: **PENDING** (certs + VMs — hard blockers).
 - **Milestone: shippable installer — pipeline proven through compile; signing wired, not yet
   signed/verified.**

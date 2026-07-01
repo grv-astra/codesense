@@ -230,6 +230,16 @@ blocked on procurement).
   - **Frontend build ✓** + **Tauri Rust app compile + link ✓** — `tauri build` produced
     `target/release/codesense.exe` (**11.87 MB**); the build log confirmed the `resources/llama-runtime`
     DLLs registered as bundle resources. My `main.rs` edits compile clean on **rustc 1.96**.
+  - **LIVE RUN ✓ + 2 Windows bugs found & fixed** (commit `2fbfd1e`). Ran the built app from a mirrored
+    install layout: it launches, spawns the backend on 127.0.0.1:8585, Django routes resolve
+    (`/admin/`→302) and WhiteNoise serves static (`/static/admin/css/base.css`→200). Running it
+    surfaced two Windows-only bugs never hit on the macOS-only prior builds: **(1)** `main.rs` set
+    `SEMGREP_BIN` with **no `.exe`** (the backend uses that override verbatim; only the
+    `SCANNER_TOOLS_DIR` fallback appends the ext) → the packaged scanner couldn't find OpenGrep →
+    scans found nothing. Fixed with a `cfg!(target_os="windows")` `semgrep.exe`. **(2)** `codesense.spec`
+    didn't collect **`whitenoise`** (settings references it only by dotted string) → the frozen backend
+    **crashed at startup** on `collectstatic` (`ModuleNotFoundError: whitenoise`). Fixed with
+    `collect_submodules("whitenoise")`. Both re-verified live after re-freeze/rebuild.
   - ⚠️ **Toolchain gotcha (fixed):** the host's **rustc 1.85.1** was too old for current Tauri deps
     (`darling`/`icu_*`/`image`/`serde_with`/`time` need 1.86–1.88); `rustup update stable` → **1.96.0**
     unblocked it. *(The global toolchain on this machine was updated as a build-host setup step.)*
