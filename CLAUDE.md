@@ -5,6 +5,17 @@ You are picking up work on **Code Sense** (`yacm`), an **offline** SAST desktop 
 before acting (full developer onboarding: `docs/handoff/onboarding.md`). This file is the quick orientation.
 
 ## Current roadmap position
+
+> **🏁 ROADMAP COMPLETE — W1–W12 done (W12: 2026-07-01).** All 12 weeks landed on branch `week6`
+> (W6–W8 pushed to `origin/week6@2bd8e7c`; W9–W12 are **local-only, NOT pushed** — awaiting OK).
+> The closing measurement pass (`metrics/RESULTS.md`) shows **every accuracy axis meets its target**:
+> detector F1/recall 1.000 / FP 0.000; verifier Tier-2 F1 1.000 + FP-suppression **0.857** (was
+> 0.000); enrichment parse-rate **1.00** (was 0.34); per-finding LLM latency 29.7 s p50. Two
+> **infrastructure/procurement gaps** remain (not code/model regressions): the ≥40% scan speed-up
+> (needs a multi-slot host — this box serializes on one CPU slot) and a **signed** installer (needs
+> certs + clean VMs). See `metrics/RESULTS.md`, `docs/RELEASE-NOTES.md`, and the "Week 12" sections
+> below. Suite **169 pass / 2 skip**; eval gate green.
+
 - The 12-week plan lives in `docs/superpowers/plans/2026-05-31-codesense-12week-roadmap-README.md`
   (index) with the design spec in `docs/superpowers/specs/2026-05-31-codesense-12week-roadmap-design.md`
   and per-phase plans (`...-phase1/2/3.md`) alongside the README. Execution model: one session per week,
@@ -260,35 +271,46 @@ blocked on procurement).
   Windows cert, per-OS VMs); W6 ≥40% wall-time, W8 CI on a real runner, W10 live-scan visual (all need a
   live 7B host). See `metrics/scorecard.md` W11.
 
-## Next-week brief — Week 12: Harden + measure results
+## Phase 3 — W12 DONE on branch `week6` (committed locally, NOT pushed) — 2026-07-01
 
-**Goal:** measure the 12-week outcomes against the W1 baseline and document them; fix the top 1–2
-regressions. **Acceptance:** `metrics/RESULTS.md` shows the before/after scorecard with §9 targets met
-(or documented gaps); `manage.py test scanner local.api_app` green; the eval gate green. Plan:
-`docs/superpowers/plans/...-phase3.md` (Week 12, ~line 151). **Measurement + hardening, not feature code.**
+**W12 — Harden + measure results.** The roadmap's closing pass: re-measure every scorecard axis with
+the final build/model against a **live** instruct 7B host, write the before/after results doc, and
+fix the top quality item (TDD). **Measurement + hardening, no feature code.** Full detail:
+[`metrics/RESULTS.md`](metrics/RESULTS.md), `metrics/scorecard.md` (Week 12), `docs/RELEASE-NOTES.md`.
 
-**Tasks:**
-1. **12.1 — re-run the full scorecard** — re-measure every axis (detector + verifier Tier-2 +
-   enrichment parse-rate + DVB scan wall-time + build/app-size) with the W11 build/model, rendered via
-   `scripts/eval/scorecard.py` (`render_scorecard`). A **live 7B-Instruct host** clears the long-owed
-   model-bound rows (W6 ≥40% wall-time, per-finding latency, W10 live-scan visual).
-2. **12.2 — write `metrics/RESULTS.md`** — a W1→W12 before/after table per metric + the §9 thresholds +
-   pass/fail, then a short narrative (what improved, what's still open, next-quarter recommendation).
-3. **12.3 — final hardening** — fix the top 1–2 regressions surfaced (each TDD: failing test → fix →
-   green → commit); update `CLAUDE.md` to "roadmap complete"; write release notes.
+- **12.1 — full scorecard re-measured live.** Host = the sibling `astra-model-host/` 7B
+  (Apache Qwen2.5-Coder-7B-Instruct Q4_K_M) on `127.0.0.1:8001` (CPU-only, single-slot, ~30 s/call).
+  - **Detector** (`run_eval.py --dataset curated --tier detector --gate`, real OpenGrep): **PASS** —
+    F1/recall **1.000**, FP **0.000**, TP=7/FP=0/FN=0/TN=7 across all 7 curated langs.
+  - **Verifier Tier-2** (live, 8 detector findings from the 7 real fixtures): **F1 1.000**, all
+    TP-retained. **FP-suppression = 0.857 (6/7)** via a direct probe on the safe fixtures (they're
+    detector TNs so never reach the verifier through the pipeline — the standing curated caveat); the
+    one miss errs toward a spurious flag. Was **0.000** (FIM rubber-stamp) at W1.
+  - **Enrichment** (live, 8 real findings): parse-rate **1.00**, 0 CWE contradictions. Was 0.34 at W1.
+  - **Per-finding LLM latency = 29.7 s p50** (16 live calls). **App size ≈ 4.85 GB** (core-payload proxy).
+  - Rendered via `scripts/eval/scorecard.py render_scorecard` (see `metrics/scorecard.md` W12).
+- **12.2 — `metrics/RESULTS.md` written** — W1→W12 before/after per axis + §9 pass/fail + narrative
+  (what improved, what's open per spec §7, next-quarter rec). Every **accuracy** axis meets target.
+- **12.3 — hardening (TDD).** The re-measure surfaced **no regressions**. The one actionable quality
+  item — the 7B occasionally prefixing an enriched title with a canonical CWE label ("CWE-78: OS
+  Command Injection"), the deferred-since-W5 finding — is fixed by a **deterministic title sanitizer**
+  (`report_enricher._strip_cwe_prefix`, applied in `apply_report`; the `cwe` field stays the source of
+  truth, surfaced separately as the W10 CWE link). RED→GREEN, 4 new tests. Suite **169 pass / 2 skip**.
 
-**Environment notes / carry-overs (still owed):**
-- **W11 signed artifact + clean-VM acceptance** remain **blocked on procurement:** (a) an Apple
-  Developer ID + notarization creds, (b) a Windows code-signing cert, (c) per-OS clean test VMs. The
-  signing/notarization steps are **wired** (macOS via Tauri/Apple env; Windows via `signtool` behind
-  `-SigningCert`) — they only need the creds + a VM to produce and verify a real install→scan.
-- The instruct path now ships by default in the app (`main.rs` sets `LLM_MODEL_MODE=instruct`); the
-  bundled GGUF is the Apache Qwen2.5-Coder-7B-Instruct Q4_K_M (~4.68 GB).
-- **NSIS cannot bundle the 4.68 GB 7B model** (32-bit makensis ~2 GB mmap limit — W11 on-host finding).
-  Decide the Windows strategy: low-tier 1.5B in the EXE (`-ModelTier low`, fits) / split-GGUF / WiX-MSI
-  / first-run fetch. See `metrics/scorecard.md` "W11 NSIS large-file limit". macOS `.dmg` is unaffected.
-- **Model-host-bound owes (clear them in W12 with a live multi-slot 7B host):** W6 ≥40% wall-time;
-  W8 CI never run on a real GitHub runner; W10 live-scan visual confirmation.
+**Two gaps remain (infrastructure/procurement, NOT code/model regressions):**
+- **≥40% scan wall-time (W6)** — needs a **multi-slot** inference host; this box serializes on one CPU
+  slot so parallelization can't demonstrate the speed-up. Code path in place + env-tunable.
+- **Signed installer + clean-VM install→scan** — blocked on (a) Apple Developer ID + notarization
+  creds, (b) a Windows code-signing cert, (c) per-OS clean VMs. Signing is **wired** on both OSes.
+- **Windows 7B packaging** still blocked by the 32-bit NSIS ~2 GB mmap limit — decide low-tier 1.5B EXE
+  (`-ModelTier low`, fits) / split-GGUF / WiX-MSI / first-run fetch. macOS `.dmg` unaffected.
+
+**Still-open / carry-overs (unchanged this session, flagged not silently done):**
+- **Push strategy** for the stacked W9→W12 commits on `week6` (still **local-only**, awaiting OK).
+  **Do NOT push to frozen production `lsast-handoff-2026-05-31` without explicit OK.**
+- OWASP Benchmark headline still deferred (curated N=14 is a coverage probe); grow curated with genuine
+  detector-FP cases so verifier FP-suppression is exercised through the full pipeline.
+- W8 CI never run on a real GitHub runner; deferred fusion high-sev-FP policy decision.
+- Prod Phase-1 deploy pending (push OK + `LLM_MODEL_MODE=instruct` on cloud + reachable instruct host
+  served `--jinja`); `main` vs prod reconcile (no Phase 1 on `main`).
 - Pre-existing, out of scope: `scripts/eval/tests/test_owasp.py` POSIX-path failure.
-- Branch: continue on `week6` (or cut `week12` off it). **Do NOT push to frozen production
-  `lsast-handoff-2026-05-31` without explicit OK.** The stacked W9/W10/W11 commits are local-only.

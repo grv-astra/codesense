@@ -517,3 +517,82 @@ installer that embeds the 7B model** — independent of certs/VM. Options (decid
 
 The macOS `.dmg` path (hdiutil/Tauri) has **no equivalent 2 GB limit**, so the 7B bundles there; this
 is Windows/NSIS-specific.
+
+## Week 12 (Final re-measure + harden) — 2026-07-01
+
+The roadmap's closing measurement pass: every axis re-measured against the W1 baseline with
+the **final build/model** (instruct path, Apache-2.0 Qwen2.5-Coder-7B-Instruct Q4_K_M served
+live on `127.0.0.1:8001`). Consolidated before/after + narrative in
+[`metrics/RESULTS.md`](RESULTS.md). Branch `week6` (local-only). **Milestone: outcomes measured.**
+
+| Metric | W1 baseline | **W12 (live)** | Target (§9) | Verdict |
+|---|---|---|---|---|
+| Detector F1 | 1.000 (N=4) | **1.000** (N=14, 7 langs) | ≥ 0.70 | ✅ |
+| Detector recall / FP-rate | 1.000 / 0.000 | **1.000 / 0.000** (TP=7/FP=0/FN=0/TN=7) | ≥ 0.60 / ≤ 0.25 | ✅ |
+| Verifier Tier-2 F1 | N/A (FIM) | **1.000** (8 findings, all TP-retained) | ≥ 0.70 | ✅ |
+| Verifier FP-suppression | 0.000 (rubber-stamp) | **0.857** (6/7 safe→FP) | improve | ✅ |
+| Enrichment parse-rate | 0.34 | **1.00** (8/8; 0 CWE contradictions) | > 0.80 | ✅ |
+| Per-finding LLM latency | N/A | **29.7 s p50** (16 calls, 21.4–43.5 s) | record | ✅ |
+| Scan wall-time (p50) ↓ ≥ 40% | 540 s | **not validated** (single-slot CPU host) | ↓ ≥ 40% | ⚠️ gap |
+| Signed build OK | False | **False** (certs + VM unavailable) | True | ⚠️ gap |
+| App size (GB) | 5.7 | **~4.85** (core AI-payload proxy) | record | ✅ |
+
+### Rendered W12 scorecard (`scripts/eval/scorecard.py` `render_scorecard`)
+
+| Metric | Value |
+|---|---|
+| Detector F1 | 1.000 |
+| Detector FP-rate | 0.000 |
+| Verifier FP-suppression | 0.857 |
+| Verifier Tier-2 F1 | 1.000 |
+| Enrichment parse-rate | 1.00 |
+| Scan wall-time (p50, s) | N/A |
+| Per-finding LLM latency (s) | 29.7 |
+| Signed build OK | False |
+| App size (GB) | 4.8 |
+
+### Provenance & caveats
+
+- **Detector** — `run_eval.py --dataset curated --tier detector --gate` (real OpenGrep +
+  staged `dist/semgrep-rules`, Windows). **PASS**, exit 0; TP=7/FP=0/FN=0/TN=7 across all 7
+  curated languages, per-language recall 1.000. N=14 (coverage probe; OWASP headline still
+  deferred).
+- **Verifier Tier-2 (live)** — the live verifier judged all **8** detector findings from the
+  7 real fixtures (python SQLi yields 2: CWE-89 + CWE-915) as **TP** at conf 1.0 with concrete
+  source→sink reasons. tp=8/fp=0/fn=0/tn=0 → P=R=F1=1.000. Clean **TP-retention**: no real
+  finding regressed.
+- **Verifier FP-suppression (live, direct probe)** — the curated **safe** fixtures are detector
+  TNs (0 findings) so none reach the verifier via the pipeline (the standing W4/W8/W9 caveat).
+  FP-suppression was measured with a **direct probe** (W4 A/B method): each of the 7 safe
+  fixtures' code fed to the live verifier with a synthetic flagged dataflow, expecting `FP`.
+  **6/7 → FP** (0.857). The one miss (`kt_cmdi_safe` → TP) errs **toward a spurious flag, not
+  a missed vuln** — the safe direction. Up from *never* emitting FP (W1 rubber-stamp).
+- **Enrichment (live)** — 8/8 findings received a usable `FindingReport`; **0 CWE-number
+  contradictions** in authored prose. Up from 0.34. (Title-phrase check is a looser automated
+  one than W5's manual audit; two titles still embed a canonical CWE phrase — cosmetic, the
+  deferred W5 title one-liner still applies.)
+- **Latency** — 29.7 s p50 / 30.2 s mean over 16 live calls (8 verifier + 8 enrich) on the
+  **CPU-only** 7B. The per-file detector rule-reload (~85 s/file) is a single-file-invocation
+  artifact of the eval harness, **not** a folder-scan wall-time.
+- **Wall-time ≥40% — documented gap.** W6 shipped bounded concurrency with proven
+  parallel≡serial identity, but the only reachable host serializes inference on one CPU slot, so
+  overlapping calls cannot beat that slot — the ≥40% number needs a **multi-slot host**. Code
+  path in place and env-tunable; measurement owed on infra hardware.
+- **App size** — core AI payload on disk: model 4.36 GiB + llama DLLs 78.7 MB + backend 28.7 MB
+  + OpenGrep 44.9 MB + rules 6.7 MB ≈ 4.52 GiB ≈ **4.85 GB** (decimal). Staged-payload proxy —
+  no NSIS installer producible (32-bit `makensis` can't mmap the 4.68 GB GGUF, W11 blocker).
+
+### Status vs acceptance (W12)
+
+- Before/after scorecard with targets met or documented gaps: **PASS** (`metrics/RESULTS.md`).
+- `manage.py test scanner local.api_app`: **PASS** (**169 pass / 2 skip**; +4 for the W12.3
+  enrichment-title hardening fix — was 165/2).
+- Eval gate green: **PASS** (`--tier detector --gate` exit 0).
+- W12.3 hardening (TDD): the re-measure surfaced **no regressions** (all accuracy axes pass); the one
+  actionable quality item — the 7B occasionally prefixing an enriched title with a canonical CWE
+  label ("CWE-78: OS Command Injection"), the deferred-since-W5 finding — is fixed with a
+  deterministic title sanitizer (`report_enricher._strip_cwe_prefix`, stripped in `apply_report`;
+  the CWE field stays the source of truth). 4 new tests, RED→GREEN.
+- **Milestone: outcomes measured — roadmap complete.** Two gaps remain, both
+  infrastructure/procurement (multi-slot host for ≥40% wall-time; certs + VMs for a signed
+  installer), not model or code regressions.
