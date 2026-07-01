@@ -36,6 +36,21 @@ def _looks_like_placeholder(text: str) -> bool:
     return bool(text) and bool(_PLACEHOLDER_RE.search(text))
 
 
+# The instruct 7B sometimes prefixes the authored title with a canonical CWE
+# label (e.g. "CWE-78: OS Command Injection") and occasionally grabs the wrong
+# number for the phrase (W5/W12 finding). The CWE is a deterministic field and
+# the source of truth (surfaced as the CWE reference link), so the LLM title must
+# never embed a CWE id — strip any leading "CWE-<n>" prefix + separator.
+_CWE_TITLE_PREFIX_RE = re.compile(r"^\s*CWE-\d+\s*[:\-–—]?\s*", re.IGNORECASE)
+
+
+def _strip_cwe_prefix(title: str) -> str:
+    """Remove a leading 'CWE-<n>:' style prefix from an LLM title. If stripping
+    would leave nothing usable, keep the original (never blank the title)."""
+    stripped = _CWE_TITLE_PREFIX_RE.sub("", title or "").strip()
+    return stripped if stripped else (title or "")
+
+
 def _sanitize_report(report: FindingReport) -> FindingReport | None:
     """Blank any field that's a placeholder echo; return None if nothing usable
     survives, so the caller keeps the deterministic detector-derived fields."""
@@ -123,7 +138,7 @@ def apply_report(finding: dict, report: FindingReport | None) -> dict:
     if report is None:
         return finding
     if report.name and not _looks_like_placeholder(report.name):
-        finding["title"] = report.name[:200]
+        finding["title"] = _strip_cwe_prefix(report.name)[:200]
     if report.description and not _looks_like_placeholder(report.description):
         finding["description"] = report.description
     if report.impact and not _looks_like_placeholder(report.impact):

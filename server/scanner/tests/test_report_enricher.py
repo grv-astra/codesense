@@ -102,3 +102,38 @@ class ApplyReportTests(SimpleTestCase):
     def test_none_report_leaves_finding_unchanged(self):
         f = self._base()
         self.assertEqual(apply_report(f, None), self._base())
+
+    def test_strips_embedded_cwe_prefix_from_title(self):
+        # The 7B sometimes prefixes the title with a canonical CWE label
+        # (e.g. "CWE-78: OS Command Injection") and occasionally grabs the wrong
+        # number (W5/W12 finding). The deterministic `cwe` field is the source of
+        # truth (surfaced separately as the CWE reference link), so the LLM title
+        # must never embed a CWE id — strip it.
+        f = self._base()
+        apply_report(f, FindingReport(name="CWE-78: OS Command Injection",
+                                      description="d", impact="", remediation=""))
+        self.assertEqual(f["title"], "OS Command Injection")
+        self.assertEqual(f["cwe"], "CWE-89")   # cwe field untouched (source of truth)
+
+    def test_strips_cwe_prefix_variants(self):
+        for raw, want in [
+            ("CWE-94: Command Injection", "Command Injection"),
+            ("CWE-89 - SQL Injection", "SQL Injection"),
+            ("cwe-79 Cross-Site Scripting", "Cross-Site Scripting"),
+        ]:
+            f = self._base()
+            apply_report(f, FindingReport(name=raw, description="d", impact="", remediation=""))
+            self.assertEqual(f["title"], want)
+
+    def test_title_without_cwe_prefix_unchanged(self):
+        f = self._base()
+        apply_report(f, FindingReport(name="SQL Injection in transfer",
+                                      description="d", impact="", remediation=""))
+        self.assertEqual(f["title"], "SQL Injection in transfer")
+
+    def test_bare_cwe_title_keeps_original(self):
+        # If stripping the prefix would leave nothing usable, keep the original
+        # rather than blanking the title.
+        f = self._base()
+        apply_report(f, FindingReport(name="CWE-89", description="d", impact="", remediation=""))
+        self.assertEqual(f["title"], "CWE-89")
