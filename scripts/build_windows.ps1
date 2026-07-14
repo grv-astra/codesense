@@ -126,11 +126,17 @@ Ok "llama-server-$Triple.exe staged"
 
 # A shared-library llama.cpp build ships llama-server.exe as a thin launcher that
 # dynamically links its runtime DLLs (llama-server-impl.dll, llama.dll,
-# llama-common.dll, ggml*.dll, mtmd.dll, libomp*). Tauri places the sidecar exe at
-# the install ROOT, so those DLLs must travel too; stage every *.dll sitting beside
-# llama-server.exe into resources\llama-runtime, which the launcher prepends to the
-# child PATH (see client\src-tauri\src\main.rs::spawn_llama). A single-file static
-# build has no sibling DLLs and this simply stages nothing.
+# llama-common.dll, ggml*.dll, mtmd.dll, libomp*). Stage every *.dll sitting beside
+# llama-server.exe into resources\llama-runtime as a BUILD-TIME staging location;
+# tauri.conf.json's `bundle.resources` then maps resources/llama-runtime/*.dll to
+# target "" (empty = $RESOURCES root), and on Windows $RESOURCES IS the directory
+# Tauri installs the sidecar exe into — so at install time the DLLs land beside
+# llama-server.exe, which is what its default DLL search order actually checks.
+# (An earlier attempt kept the DLLs nested under resources\llama-runtime\ at
+# install time and tried to compensate with a child-process PATH prepend in
+# main.rs::spawn_llama; that was proven insufficient — the loader never found
+# them. The tauri.conf.json remap is the real fix; this staging step is unchanged.)
+# A single-file static build has no sibling DLLs and this simply stages nothing.
 $LlamaSrcDir = Split-Path -Parent (Resolve-Path $LlamaServer)
 $llamaDlls = @(Get-ChildItem -Path $LlamaSrcDir -Filter *.dll -File -ErrorAction SilentlyContinue)
 if ($llamaDlls.Count -gt 0) {
@@ -150,6 +156,10 @@ if (-not $ModelGguf -or -not (Test-Path $ModelGguf)) {
 Copy-Item $ModelGguf (Join-Path $ResModel "astra.gguf") -Force
 $gb = [math]::Round((Get-Item $ModelGguf).Length / 1GB, 2)
 Ok "model ($ModelTier tier, $gb GB) staged as resources\model\astra.gguf"
+
+Info "Splitting model into <2GB parts (NSIS/MSI installer size workaround)"
+& (Join-Path $PSScriptRoot "split_asset.ps1") -Path (Join-Path $ResModel "astra.gguf")
+Ok "model split into parts + manifest.json in resources\model"
 
 # --------------------------------------------------------------------------- #
 # 4. SBOM tools (Syft / Grype / Grant / Cosign) - latest releases via GitHub API
@@ -209,6 +219,14 @@ if (Test-Path $grypeExe) {
     Write-Warning "grype db update returned $LASTEXITCODE; the bundled CVE DB may be empty/stale."
   } else {
     Ok "Grype DB snapshot in resources\grype-db (frozen; AUTO_UPDATE off at runtime)"
+    $vulnDb = Join-Path $ResGrypeDb "vulnerability.db"
+    if (Test-Path $vulnDb) {
+      Info "Splitting vulnerability.db into <2GB parts (NSIS/MSI installer size workaround)"
+      & (Join-Path $PSScriptRoot "split_asset.ps1") -Path $vulnDb
+      Ok "vulnerability.db split into parts + manifest.json in resources\grype-db"
+    } else {
+      Write-Warning "vulnerability.db not found at $vulnDb after db update; skipping split."
+    }
   }
 } else {
   Write-Warning "grype.exe not staged; skipping DB snapshot. Re-run without -SkipTools."
