@@ -3,6 +3,8 @@ import type { AssetSetupState } from '@/hooks/use-asset-setup';
 const ASSET_LABELS: Record<string, string> = {
   model: 'AI model',
   'grype-db': 'vulnerability database',
+  unknown: 'setup',
+  setup: 'setup',
 };
 
 type Props = {
@@ -16,7 +18,11 @@ export function FirstRunSetup({ state }: Props) {
 
   if (state.status === 'failed') {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4" style={{ backgroundColor: '#2D2D2D' }}>
+      <div
+        className="min-h-screen flex items-center justify-center p-4"
+        style={{ backgroundColor: '#2D2D2D' }}
+        role="alert"
+      >
         <div className="w-full max-w-md rounded-2xl bg-white text-black shadow-2xl overflow-hidden px-8 py-8 text-center space-y-4">
           <h1 className="text-2xl font-bold">Setup failed</h1>
           <p className="text-sm text-gray-600">
@@ -35,10 +41,18 @@ export function FirstRunSetup({ state }: Props) {
     );
   }
 
-  const entries = Object.entries(state.progress);
-  const totalBytes = entries.reduce((sum, [, p]) => sum + p.total, 0);
-  const writtenBytes = entries.reduce((sum, [, p]) => sum + p.bytes, 0);
-  const percent = totalBytes > 0 ? Math.round((writtenBytes / totalBytes) * 100) : 0;
+  // The two assets reassemble sequentially (model fully completes before
+  // grype-db starts), so a byte-proportional sum across whatever keys have
+  // appeared so far in state.progress would make the percentage jump
+  // backward the moment grype-db's first (tiny) progress event arrives and
+  // its full total is added to the denominator. Fixed 50/50 weighting keeps
+  // the percentage monotonically non-decreasing regardless of arrival order.
+  const ASSET_WEIGHT_KEYS = ['model', 'grype-db'] as const;
+  const fractions = ASSET_WEIGHT_KEYS.map((key) => {
+    const p = state.progress[key];
+    return p && p.total > 0 ? p.bytes / p.total : 0;
+  });
+  const percent = Math.round((fractions.reduce((sum, f) => sum + f, 0) / ASSET_WEIGHT_KEYS.length) * 100);
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ backgroundColor: '#2D2D2D' }}>

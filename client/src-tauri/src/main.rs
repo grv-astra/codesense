@@ -238,6 +238,12 @@ fn reassemble_with_retry(
         });
         match result {
             Ok(path) => return Ok(path),
+            // ManifestMissing/ManifestCorrupt indicate a packaging defect, not
+            // a transient condition — retrying can never succeed, so bail out
+            // on the first attempt instead of burning a second identical try.
+            Err(e @ (ReassemblyError::ManifestMissing | ReassemblyError::ManifestCorrupt(_))) => {
+                return Err(e);
+            }
             Err(e) => last_err = Some(e),
         }
     }
@@ -293,7 +299,9 @@ fn ensure_assets_then_spawn(app: tauri::AppHandle) {
             Err(_) => {
                 let _ = app.emit(
                     "asset-setup-failed",
-                    serde_json::json!({ "asset": "model", "reason": "failed to resolve app data directory" }),
+                    // This failure blocks both assets, not just the model — "setup"
+                    // isn't a real asset name, signaling a setup-wide failure.
+                    serde_json::json!({ "asset": "setup", "reason": "failed to resolve app data directory" }),
                 );
                 return;
             }
@@ -306,9 +314,14 @@ fn ensure_assets_then_spawn(app: tauri::AppHandle) {
         ) {
             Ok(path) => path,
             Err(e) => {
+                let reason = if matches!(e, ReassemblyError::ManifestMissing | ReassemblyError::ManifestCorrupt(_)) {
+                    format!("reinstall required: {e}")
+                } else {
+                    e.to_string()
+                };
                 let _ = app.emit(
                     "asset-setup-failed",
-                    serde_json::json!({ "asset": "model", "reason": e.to_string() }),
+                    serde_json::json!({ "asset": "model", "reason": reason }),
                 );
                 return;
             }
@@ -317,9 +330,14 @@ fn ensure_assets_then_spawn(app: tauri::AppHandle) {
         if let Err(e) = reassemble_with_retry(
             &app, "grype-db", &grype_resource, &grype_target_dir, &GRYPE_DB_ASSET,
         ) {
+            let reason = if matches!(e, ReassemblyError::ManifestMissing | ReassemblyError::ManifestCorrupt(_)) {
+                format!("reinstall required: {e}")
+            } else {
+                e.to_string()
+            };
             let _ = app.emit(
                 "asset-setup-failed",
-                serde_json::json!({ "asset": "grype-db", "reason": e.to_string() }),
+                serde_json::json!({ "asset": "grype-db", "reason": reason }),
             );
             return;
         }
