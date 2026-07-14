@@ -13,7 +13,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(),
+  invoke: vi.fn(() => Promise.resolve()),
 }));
 
 import { useAssetSetup } from './use-asset-setup';
@@ -68,5 +68,63 @@ describe('useAssetSetup', () => {
       result.current.retry();
     });
     expect(invoke).toHaveBeenCalledWith('retry_asset_setup');
+  });
+
+  test('ignores a stale asset-setup-progress event once state is already failed', async () => {
+    const { result } = renderHook(() => useAssetSetup());
+    await waitFor(() => expect(listeners['asset-setup-failed']).toBeDefined());
+
+    act(() => {
+      listeners['asset-setup-failed']({ payload: { asset: 'grype-db', reason: 'disk full' } });
+    });
+    expect(result.current.status).toBe('failed');
+
+    act(() => {
+      listeners['asset-setup-progress']({ payload: { asset: 'model', bytes: 10, total: 100 } });
+    });
+
+    expect(result.current.status).toBe('failed');
+    if (result.current.status === 'failed') {
+      expect(result.current.reason).toBe('disk full');
+    }
+  });
+
+  test('ignores a stale asset-setup-complete event arriving after asset-setup-failed', async () => {
+    const { result } = renderHook(() => useAssetSetup());
+    await waitFor(() => {
+      expect(listeners['asset-setup-failed']).toBeDefined();
+      expect(listeners['asset-setup-complete']).toBeDefined();
+    });
+
+    act(() => {
+      listeners['asset-setup-failed']({ payload: { asset: 'grype-db', reason: 'disk full' } });
+    });
+    expect(result.current.status).toBe('failed');
+
+    // A straggling "complete" event arrives out of order after "failed" already fired.
+    act(() => {
+      listeners['asset-setup-complete']({ payload: undefined });
+    });
+
+    expect(result.current.status).toBe('failed');
+    if (result.current.status === 'failed') {
+      expect(result.current.reason).toBe('disk full');
+    }
+  });
+
+  test('retry() transitions to failed when invoke() rejects', async () => {
+    (invoke as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('backend unreachable'));
+    const { result } = renderHook(() => useAssetSetup());
+
+    act(() => {
+      result.current.retry();
+    });
+    expect(result.current.status).toBe('pending');
+
+    await waitFor(() => expect(result.current.status).toBe('failed'));
+    if (result.current.status === 'failed') {
+      expect(result.current.asset).toBe('unknown');
+      expect(result.current.reason).toBe('backend unreachable');
+    }
   });
 });

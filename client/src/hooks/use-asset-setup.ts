@@ -35,14 +35,18 @@ export function useAssetSetup(): AssetSetupState & { retry: () => void } {
     });
 
     listen('asset-setup-complete', () => {
-      setState({ status: 'ready' });
+      setState((prev) => (prev.status === 'ready' || prev.status === 'failed' ? prev : { status: 'ready' }));
     }).then((fn) => {
       if (cancelled) fn();
       else unlisten.push(fn);
     });
 
     listen<FailedPayload>('asset-setup-failed', (event) => {
-      setState({ status: 'failed', asset: event.payload.asset, reason: event.payload.reason });
+      setState((prev) =>
+        prev.status === 'ready' || prev.status === 'failed'
+          ? prev
+          : { status: 'failed', asset: event.payload.asset, reason: event.payload.reason },
+      );
     }).then((fn) => {
       if (cancelled) fn();
       else unlisten.push(fn);
@@ -56,7 +60,10 @@ export function useAssetSetup(): AssetSetupState & { retry: () => void } {
 
   const retry = useCallback(() => {
     setState({ status: 'pending', progress: {} });
-    void invoke('retry_asset_setup');
+    invoke('retry_asset_setup').catch((error: unknown) => {
+      const reason = error instanceof Error ? error.message : String(error);
+      setState({ status: 'failed', asset: 'unknown', reason });
+    });
   }, []);
 
   return { ...state, retry };
