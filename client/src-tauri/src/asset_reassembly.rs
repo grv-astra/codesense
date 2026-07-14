@@ -177,7 +177,17 @@ pub fn ensure_ready(
 
     fs::rename(&tmp_path, &target_path)?;
     fs::write(&done_path, &manifest.sha256)?;
-    copy_companion_files(resource_dir, spec, target_dir)?;
+    // The primary asset is already reassembled and checksum-verified at this
+    // point, so a companion-file copy failure (e.g. a permissions hiccup on a
+    // trivial grype metadata file) must not be reported as if the whole
+    // multi-GB reassembly failed — that would mislead debugging into
+    // re-running work that already succeeded. Log and move on.
+    if let Err(e) = copy_companion_files(resource_dir, spec, target_dir) {
+        eprintln!(
+            "[asset_reassembly] warning: failed to copy companion files for {}: {e}",
+            spec.file_name
+        );
+    }
 
     Ok(target_path)
 }

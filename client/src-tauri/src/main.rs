@@ -23,6 +23,7 @@
 mod asset_reassembly;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use tauri::{
@@ -46,6 +47,30 @@ struct AppState {
     ai_paused: Mutex<bool>,
     model_path: Mutex<Option<PathBuf>>,
     grype_db_dir: Mutex<Option<PathBuf>>,
+    /// Guards against two concurrent `ensure_assets_then_spawn` runs (startup
+    /// racing a `retry_asset_setup` call) both writing the same `.tmp` file.
+    setup_in_progress: AtomicBool,
+    /// Set at the start of `shutdown()` so an in-flight reassembly that
+    /// finishes afterwards knows not to spawn sidecars nobody will kill.
+    quitting: AtomicBool,
+}
+
+/// RAII guard that resets `AppState::setup_in_progress` back to `false` on
+/// every exit path (normal return, early return, or panic) out of
+/// `ensure_assets_then_spawn`'s thread body. Owns a cloned `AppHandle`
+/// (cheap — it's a handle, not the state itself) so it isn't tied to the
+/// lifetime of any single `state.setup_in_progress` borrow.
+struct SetupInProgressGuard {
+    app: tauri::AppHandle,
+}
+
+impl Drop for SetupInProgressGuard {
+    fn drop(&mut self) {
+        self.app
+            .state::<AppState>()
+            .setup_in_progress
+            .store(false, Ordering::SeqCst);
+    }
 }
 
 fn spawn_backend(app: &tauri::AppHandle, grype_db_dir: &std::path::Path) -> Option<CommandChild> {
@@ -227,15 +252,52 @@ fn reassemble_with_retry(
 /// `retry_asset_setup` command's implementation.
 fn ensure_assets_then_spawn(app: tauri::AppHandle) {
     std::thread::spawn(move || {
-        let model_resource = app
-            .path()
-            .resolve("resources/model", BaseDirectory::Resource)
-            .unwrap_or_default();
-        let grype_resource = app
-            .path()
-            .resolve("resources/grype-db", BaseDirectory::Resource)
-            .unwrap_or_default();
-        let data_dir = app.path().app_local_data_dir().unwrap_or_default();
+        // Startup and `retry_asset_setup` (exposed to the frontend) can both
+        // land here concurrently. A retry request that arrives while one run
+        // is already in flight is simply a no-op, not queued or errored — it
+        // must NOT proceed, since two runs would race on the same `.tmp` path.
+        if app
+            .state::<AppState>()
+            .setup_in_progress
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return;
+        }
+        // From here on, every exit path (early return or normal completion)
+        // must clear the flag again — the guard does that on drop.
+        let _guard = SetupInProgressGuard { app: app.clone() };
+
+        let model_resource = match app.path().resolve("resources/model", BaseDirectory::Resource) {
+            Ok(p) => p,
+            Err(_) => {
+                let _ = app.emit(
+                    "asset-setup-failed",
+                    serde_json::json!({ "asset": "model", "reason": "failed to resolve resources/model directory" }),
+                );
+                return;
+            }
+        };
+        let grype_resource = match app.path().resolve("resources/grype-db", BaseDirectory::Resource) {
+            Ok(p) => p,
+            Err(_) => {
+                let _ = app.emit(
+                    "asset-setup-failed",
+                    serde_json::json!({ "asset": "grype-db", "reason": "failed to resolve resources/grype-db directory" }),
+                );
+                return;
+            }
+        };
+        let data_dir = match app.path().app_local_data_dir() {
+            Ok(p) => p,
+            Err(_) => {
+                let _ = app.emit(
+                    "asset-setup-failed",
+                    serde_json::json!({ "asset": "model", "reason": "failed to resolve app data directory" }),
+                );
+                return;
+            }
+        };
         let model_target_dir = data_dir.join("model");
         let grype_target_dir = data_dir.join("grype-db");
 
@@ -268,6 +330,13 @@ fn ensure_assets_then_spawn(app: tauri::AppHandle) {
             *state.grype_db_dir.lock().unwrap() = Some(grype_target_dir.clone());
         }
 
+        // If the user quit while reassembly was still running, shutdown()
+        // already ran and there is nothing left to kill these sidecars — so
+        // don't start them, and don't bother signaling a UI that's going away.
+        if app.state::<AppState>().quitting.load(Ordering::SeqCst) {
+            return;
+        }
+
         let _ = app.emit("asset-setup-complete", ());
 
         let state = app.state::<AppState>();
@@ -289,6 +358,9 @@ fn kill(slot: &Mutex<Option<CommandChild>>) {
 
 fn shutdown(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
+    // Set before killing anything so a reassembly thread that's still running
+    // sees it and skips spawning sidecars we'd otherwise never get to kill.
+    state.quitting.store(true, Ordering::SeqCst);
     kill(&state.backend);
     kill(&state.llama);
 }
