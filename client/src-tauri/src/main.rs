@@ -53,6 +53,36 @@ struct AppState {
     /// Set at the start of `shutdown()` so an in-flight reassembly that
     /// finishes afterwards knows not to spawn sidecars nobody will kill.
     quitting: AtomicBool,
+    /// Mirrors the last `asset-setup-*` event so a webview that finishes
+    /// loading and registers its listeners *after* reassembly already
+    /// completed (the common case once `.done` markers exist — reassembly
+    /// then takes well under a second, easily beating the webview's JS
+    /// bootstrap) can still learn the outcome via `get_asset_setup_status`
+    /// instead of waiting forever for an event that already fired.
+    setup_status: Mutex<SetupStatus>,
+}
+
+#[derive(Clone, Default)]
+enum SetupStatus {
+    #[default]
+    Pending,
+    Ready,
+    Failed {
+        asset: String,
+        reason: String,
+    },
+}
+
+impl SetupStatus {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            SetupStatus::Pending => serde_json::json!({ "status": "pending" }),
+            SetupStatus::Ready => serde_json::json!({ "status": "ready" }),
+            SetupStatus::Failed { asset, reason } => {
+                serde_json::json!({ "status": "failed", "asset": asset, "reason": reason })
+            }
+        }
+    }
 }
 
 /// RAII guard that resets `AppState::setup_in_progress` back to `false` on
@@ -250,12 +280,37 @@ fn reassemble_with_retry(
     Err(last_err.expect("loop runs at least once"))
 }
 
+/// Records a failure in `AppState::setup_status` (so a webview that wasn't
+/// listening yet can pick it up via `get_asset_setup_status`) and emits
+/// `asset-setup-failed` for webviews that already are.
+fn fail_setup(app: &tauri::AppHandle, asset: &str, reason: String) {
+    let state = app.state::<AppState>();
+    *state.setup_status.lock().unwrap() = SetupStatus::Failed {
+        asset: asset.to_string(),
+        reason: reason.clone(),
+    };
+    let _ = app.emit(
+        "asset-setup-failed",
+        serde_json::json!({ "asset": asset, "reason": reason }),
+    );
+}
+
 /// Reassembles both bundled assets (model, grype-db) on a background thread,
 /// then spawns both sidecars once they're verified ready. Emits
 /// `asset-setup-complete` on success or `asset-setup-failed` (with a
 /// specific reason) if either asset fails after its retry — the sidecars are
 /// never spawned against unverified assets. Re-entrant: also used as the
 /// `retry_asset_setup` command's implementation.
+///
+/// Also mirrors the outcome into `AppState::setup_status` rather than
+/// relying solely on these events: once `.done` markers exist, reassembly
+/// completes in well under a second — often faster than the webview can
+/// finish loading its JS and registering event listeners, so an event-only
+/// signal can fire before anyone is listening and be lost forever. The
+/// frontend's `get_asset_setup_status` command call (issued right after it
+/// registers its listeners) closes that race by picking up whatever already
+/// happened; the listeners remain necessary for the slower first-run case
+/// where reassembly is still in progress when the frontend mounts.
 fn ensure_assets_then_spawn(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         // Startup and `retry_asset_setup` (exposed to the frontend) can both
@@ -277,32 +332,23 @@ fn ensure_assets_then_spawn(app: tauri::AppHandle) {
         let model_resource = match app.path().resolve("resources/model", BaseDirectory::Resource) {
             Ok(p) => p,
             Err(_) => {
-                let _ = app.emit(
-                    "asset-setup-failed",
-                    serde_json::json!({ "asset": "model", "reason": "failed to resolve resources/model directory" }),
-                );
+                fail_setup(&app, "model", "failed to resolve resources/model directory".to_string());
                 return;
             }
         };
         let grype_resource = match app.path().resolve("resources/grype-db", BaseDirectory::Resource) {
             Ok(p) => p,
             Err(_) => {
-                let _ = app.emit(
-                    "asset-setup-failed",
-                    serde_json::json!({ "asset": "grype-db", "reason": "failed to resolve resources/grype-db directory" }),
-                );
+                fail_setup(&app, "grype-db", "failed to resolve resources/grype-db directory".to_string());
                 return;
             }
         };
         let data_dir = match app.path().app_local_data_dir() {
             Ok(p) => p,
             Err(_) => {
-                let _ = app.emit(
-                    "asset-setup-failed",
-                    // This failure blocks both assets, not just the model — "setup"
-                    // isn't a real asset name, signaling a setup-wide failure.
-                    serde_json::json!({ "asset": "setup", "reason": "failed to resolve app data directory" }),
-                );
+                // This failure blocks both assets, not just the model — "setup"
+                // isn't a real asset name, signaling a setup-wide failure.
+                fail_setup(&app, "setup", "failed to resolve app data directory".to_string());
                 return;
             }
         };
@@ -319,10 +365,7 @@ fn ensure_assets_then_spawn(app: tauri::AppHandle) {
                 } else {
                     e.to_string()
                 };
-                let _ = app.emit(
-                    "asset-setup-failed",
-                    serde_json::json!({ "asset": "model", "reason": reason }),
-                );
+                fail_setup(&app, "model", reason);
                 return;
             }
         };
@@ -335,10 +378,7 @@ fn ensure_assets_then_spawn(app: tauri::AppHandle) {
             } else {
                 e.to_string()
             };
-            let _ = app.emit(
-                "asset-setup-failed",
-                serde_json::json!({ "asset": "grype-db", "reason": reason }),
-            );
+            fail_setup(&app, "grype-db", reason);
             return;
         }
 
@@ -355,12 +395,18 @@ fn ensure_assets_then_spawn(app: tauri::AppHandle) {
             return;
         }
 
+        *app.state::<AppState>().setup_status.lock().unwrap() = SetupStatus::Ready;
         let _ = app.emit("asset-setup-complete", ());
 
         let state = app.state::<AppState>();
         *state.backend.lock().unwrap() = spawn_backend(&app, &grype_target_dir);
         *state.llama.lock().unwrap() = spawn_llama(&app, &model_path);
     });
+}
+
+#[tauri::command]
+fn get_asset_setup_status(app: tauri::AppHandle) -> serde_json::Value {
+    app.state::<AppState>().setup_status.lock().unwrap().to_json()
 }
 
 #[tauri::command]
@@ -387,7 +433,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(AppState::default())
-        .invoke_handler(tauri::generate_handler![retry_asset_setup])
+        .invoke_handler(tauri::generate_handler![retry_asset_setup, get_asset_setup_status])
         .setup(|app| {
             let handle = app.handle().clone();
             ensure_assets_then_spawn(handle);

@@ -9,6 +9,10 @@ export type AssetSetupState =
 
 type ProgressPayload = { asset: string; bytes: number; total: number };
 type FailedPayload = { asset: string; reason: string };
+type StatusPayload =
+  | { status: 'pending' }
+  | { status: 'ready' }
+  | { status: 'failed'; asset: string; reason: string };
 
 export function useAssetSetup(): AssetSetupState & { retry: () => void } {
   const [state, setState] = useState<AssetSetupState>({ status: 'pending', progress: {} });
@@ -50,6 +54,27 @@ export function useAssetSetup(): AssetSetupState & { retry: () => void } {
     }).then((fn) => {
       if (cancelled) fn();
       else unlisten.push(fn);
+    });
+
+    // Once `.done` markers exist, reassembly on the Rust side can finish (and
+    // emit `asset-setup-complete`/`-failed`) in well under a second — often
+    // faster than this webview finishes loading its JS and registering the
+    // listeners above, so an event-only signal can fire before anyone is
+    // listening and be lost forever. This one-shot status check right after
+    // registration closes that race: it picks up whatever already happened,
+    // while the listeners above remain the source of truth for the slower
+    // first-run case where reassembly is still in progress at mount time.
+    invoke<StatusPayload>('get_asset_setup_status').then((result) => {
+      if (cancelled) return;
+      if (result.status === 'ready') {
+        setState((prev) => (prev.status === 'ready' || prev.status === 'failed' ? prev : { status: 'ready' }));
+      } else if (result.status === 'failed') {
+        setState((prev) =>
+          prev.status === 'ready' || prev.status === 'failed'
+            ? prev
+            : { status: 'failed', asset: result.asset, reason: result.reason },
+        );
+      }
     });
 
     return () => {

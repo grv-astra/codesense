@@ -13,7 +13,12 @@ vi.mock('@tauri-apps/api/event', () => ({
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(() => Promise.resolve()),
+  invoke: vi.fn((command: string) => {
+    if (command === 'get_asset_setup_status') {
+      return Promise.resolve({ status: 'pending' });
+    }
+    return Promise.resolve();
+  }),
 }));
 
 import { useAssetSetup } from './use-asset-setup';
@@ -112,8 +117,50 @@ describe('useAssetSetup', () => {
     }
   });
 
+  test('picks up an already-ready status via get_asset_setup_status if the complete event was missed', async () => {
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation((command: string) => {
+      if (command === 'get_asset_setup_status') {
+        return Promise.resolve({ status: 'ready' });
+      }
+      return Promise.resolve();
+    });
+
+    const { result } = renderHook(() => useAssetSetup());
+
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+  });
+
+  test('picks up an already-failed status via get_asset_setup_status if the failed event was missed', async () => {
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation((command: string) => {
+      if (command === 'get_asset_setup_status') {
+        return Promise.resolve({ status: 'failed', asset: 'model', reason: 'reinstall required: manifest.json is missing' });
+      }
+      return Promise.resolve();
+    });
+
+    const { result } = renderHook(() => useAssetSetup());
+
+    await waitFor(() => expect(result.current.status).toBe('failed'));
+    if (result.current.status === 'failed') {
+      expect(result.current.asset).toBe('model');
+      expect(result.current.reason).toBe('reinstall required: manifest.json is missing');
+    }
+  });
+
   test('retry() transitions to failed when invoke() rejects', async () => {
-    (invoke as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('backend unreachable'));
+    // mockRejectedValueOnce would queue by call order, not by command name —
+    // since mount now also calls invoke('get_asset_setup_status') first, a
+    // plain "once" rejection would hit that call instead of retry()'s later
+    // invoke('retry_asset_setup'). Route by command name instead.
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation((command: string) => {
+      if (command === 'get_asset_setup_status') {
+        return Promise.resolve({ status: 'pending' });
+      }
+      if (command === 'retry_asset_setup') {
+        return Promise.reject(new Error('backend unreachable'));
+      }
+      return Promise.resolve();
+    });
     const { result } = renderHook(() => useAssetSetup());
 
     act(() => {
