@@ -28,6 +28,7 @@
     "@tanstack/react-query-devtools": "^5.84.2",
     "@tanstack/react-router": "^1.123.2",
     "@tanstack/react-router-devtools": "^1.123.2",
+    "@tauri-apps/api": "^2.11.1",
     "axios": "^1.10.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
