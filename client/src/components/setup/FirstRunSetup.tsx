@@ -47,7 +47,14 @@ export function FirstRunSetup({ state }: Props) {
         <p className="text-sm text-gray-600">
           Preparing the AI model and vulnerability database (first launch only)…
         </p>
-        <div className="w-full h-2 rounded-full bg-gray-200 overflow-hidden">
+        <div
+          className="w-full h-2 rounded-full bg-gray-200 overflow-hidden"
+          role="progressbar"
+          aria-valuenow={percent}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Setup progress"
+        >
           <div className="h-full rounded-full" style={{ width: `${percent}%`, backgroundColor: '#BF0000' }} />
         </div>
         <p className="text-xs text-gray-500">{percent}%</p>

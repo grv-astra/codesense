@@ -14,6 +14,7 @@ describe('FirstRunSetup', () => {
       />,
     );
     expect(screen.getByText(/50%/)).toBeInTheDocument();
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
   });
 
   test('shows the failure reason and calls retry on click', () => {
