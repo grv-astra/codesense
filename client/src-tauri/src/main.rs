@@ -431,6 +431,18 @@ fn shutdown(app: &tauri::AppHandle) {
 
 fn main() {
     tauri::Builder::default()
+        // Must be registered first: without this, launching the exe again
+        // while the app is already running (e.g. double-clicking it without
+        // noticing the tray icon — closing the window only hides it, it
+        // doesn't quit) starts a second full backend that races the first
+        // over the same port and SQLite database. This makes a second
+        // launch attempt just focus the existing window instead.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_shell::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![retry_asset_setup, get_asset_setup_status])
