@@ -1,5 +1,6 @@
 import os, zipfile, uuid
 import tempfile
+from django.db import close_old_connections
 from django.http import JsonResponse
 from django.conf import settings
 from local.api_app.models.scan_models import ScanModel
@@ -115,6 +116,11 @@ class ScanCreateView(APIView):
                         # Remove from active scans
                         with scan_lock:
                             active_scans.pop(scan_id, None)
+                        # This thread never goes through Django's request_started/
+                        # request_finished signals, so its DB connection is never
+                        # auto-closed -- release it explicitly or it lingers open
+                        # for the life of the (GC-eligible) thread object.
+                        close_old_connections()
  
             # Start the scan in a new thread
             scan_thread = threading.Thread(target=run_scan, daemon=True)

@@ -106,6 +106,11 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": str(DATA_DIR / "app.sqlite3"),
+        # Real file (not Django's default ":memory:") so tests can open a second,
+        # independent sqlite3 connection to the same DB -- needed to exercise
+        # cross-connection commit visibility (see
+        # local/api_app/tests/test_background_thread_db_cleanup.py).
+        "TEST": {"NAME": str(DATA_DIR / "test_app.sqlite3")},
     }
 }
 

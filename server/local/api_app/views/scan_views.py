@@ -1,5 +1,6 @@
 import os, zipfile, uuid
 import tempfile
+from django.db import close_old_connections
 from django.http import JsonResponse
 from django.conf import settings
 from local.api_app.models.scan_models import ScanModel
@@ -126,7 +127,11 @@ class ScanCreateView(APIView):
                         logging.info(f"Cleaned up temporary directory: {temp_dir}")
                     except Exception as e:
                         logging.error(f"Error cleaning up temporary files: {e}")
- 
+                    # This thread never goes through Django's request_started/
+                    # request_finished signals, so its DB connection is never
+                    # auto-closed -- release it explicitly.
+                    close_old_connections()
+
             global scan_thread
             with scan_thread_lock:
                 if scan_thread and scan_thread.is_alive():
@@ -249,7 +254,11 @@ class GitHubRepoScanView(APIView):
             finally:
                 with scan_lock:
                     active_scans.pop(scan_id, None)
- 
+                # This thread never goes through Django's request_started/
+                # request_finished signals, so its DB connection is never
+                # auto-closed -- release it explicitly.
+                close_old_connections()
+
         t = threading.Thread(target=run_github_scan, daemon=True)
         with scan_lock:
             active_scans[scan_id] = t
@@ -402,6 +411,10 @@ class SbomCreateView(APIView):
                     logging.info(f"Cleaned workspace for scan {scan_id}")
                 except Exception as e:
                     logging.error(f"Cleanup failed for scan {scan_id}: {e}")
+                # This thread never goes through Django's request_started/
+                # request_finished signals, so its DB connection is never
+                # auto-closed -- release it explicitly.
+                close_old_connections()
 
         global scan_thread
         with scan_thread_lock:
@@ -526,6 +539,10 @@ class GrypeCreateView(APIView):
                     logging.info(f"Cleaned workspace for scan {scan_id}")
                 except Exception as e:
                     logging.error(f"Cleanup failed for scan {scan_id}: {e}")
+                # This thread never goes through Django's request_started/
+                # request_finished signals, so its DB connection is never
+                # auto-closed -- release it explicitly.
+                close_old_connections()
 
         global scan_thread
         with scan_thread_lock:
