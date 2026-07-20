@@ -39,6 +39,13 @@ use asset_reassembly::{ensure_ready, ReassemblyError, GRYPE_DB_ASSET, MODEL_ASSE
 
 const BACKEND_PORT: &str = "8585";
 const LLAMA_PORT: &str = "8001";
+// Baked into this build rather than left to the backend's own 90-day default
+// (settings.py::LICENSE_DURATION_DAYS) so a given client delivery has a fixed,
+// self-contained license period with no separate setup step required on their
+// machine. Note: this value is NOT part of the HMAC-signed license record
+// (only first_seen/last_seen are) -- it only stops casual clock/env editing,
+// per offline_license.py's documented threat model, not a determined user.
+const LICENSE_DURATION_DAYS: &str = "30";
 
 /// Windows Job Object wired with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: every
 /// process assigned to it is force-killed by the OS the instant the job's
@@ -239,6 +246,7 @@ fn spawn_backend(app: &tauri::AppHandle, grype_db_dir: &std::path::Path) -> Opti
                 .to_string(),
         )
         .env("COSIGN_KEY_DIR", keys_dir.to_string_lossy().to_string())
+        .env("LICENSE_DURATION_DAYS", LICENSE_DURATION_DAYS)
         .args(["127.0.0.1", BACKEND_PORT]);
 
     match cmd.spawn() {
