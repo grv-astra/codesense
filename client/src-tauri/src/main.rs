@@ -40,6 +40,78 @@ use asset_reassembly::{ensure_ready, ReassemblyError, GRYPE_DB_ASSET, MODEL_ASSE
 const BACKEND_PORT: &str = "8585";
 const LLAMA_PORT: &str = "8001";
 
+/// Windows Job Object wired with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: every
+/// process assigned to it is force-killed by the OS the instant the job's
+/// last handle closes. Windows closes all of a process's handles
+/// unconditionally on exit -- crash, Task Manager "End Task", a debugger
+/// stopping it, a logoff, anything -- so this is what guarantees the
+/// codesense-server/llama-server sidecars can never outlive this process as
+/// orphans, unlike `shutdown()` below which only runs on a *clean* exit path
+/// (tray Quit / ExitRequested) and does nothing if the parent dies abruptly.
+#[cfg(target_os = "windows")]
+mod win_job {
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
+
+    pub struct JobGuard(HANDLE);
+
+    // The handle is only ever read (assign/close), never mutated concurrently
+    // in a way that needs synchronization beyond what the OS itself provides.
+    unsafe impl Send for JobGuard {}
+    unsafe impl Sync for JobGuard {}
+
+    impl JobGuard {
+        pub fn new() -> Option<Self> {
+            unsafe {
+                let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+                if handle.is_null() {
+                    return None;
+                }
+                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                let ok = SetInformationJobObject(
+                    handle,
+                    JobObjectExtendedLimitInformation,
+                    &info as *const _ as *const std::ffi::c_void,
+                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                );
+                if ok == 0 {
+                    CloseHandle(handle);
+                    return None;
+                }
+                Some(JobGuard(handle))
+            }
+        }
+
+        /// Assigns an already-spawned process (by PID) to this job so it dies
+        /// alongside the parent regardless of how the parent's process ends.
+        pub fn assign_pid(&self, pid: u32) -> bool {
+            unsafe {
+                let proc_handle = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
+                if proc_handle.is_null() {
+                    return false;
+                }
+                let ok = AssignProcessToJobObject(self.0, proc_handle);
+                CloseHandle(proc_handle);
+                ok != 0
+            }
+        }
+    }
+
+    impl Drop for JobGuard {
+        fn drop(&mut self) {
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 struct AppState {
     backend: Mutex<Option<CommandChild>>,
@@ -60,6 +132,26 @@ struct AppState {
     /// bootstrap) can still learn the outcome via `get_asset_setup_status`
     /// instead of waiting forever for an event that already fired.
     setup_status: Mutex<SetupStatus>,
+    /// See `win_job` above. `None` on non-Windows or if job-object creation
+    /// failed (logged, not fatal -- sidecars still spawn, just without the
+    /// orphan guarantee).
+    #[cfg(target_os = "windows")]
+    job: Mutex<Option<win_job::JobGuard>>,
+}
+
+/// Assigns a freshly spawned sidecar's PID to the app's kill-on-close job
+/// object, if one exists. No-op on non-Windows.
+fn tie_to_job_lifetime(#[allow(unused_variables)] app: &tauri::AppHandle, #[allow(unused_variables)] child: &CommandChild) {
+    #[cfg(target_os = "windows")]
+    {
+        let state = app.state::<AppState>();
+        let guard = state.job.lock().unwrap();
+        if let Some(job) = guard.as_ref() {
+            if !job.assign_pid(child.pid()) {
+                eprintln!("[main] failed to assign sidecar pid {} to job object -- it may survive an ungraceful exit", child.pid());
+            }
+        }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -151,6 +243,7 @@ fn spawn_backend(app: &tauri::AppHandle, grype_db_dir: &std::path::Path) -> Opti
 
     match cmd.spawn() {
         Ok((mut rx, child)) => {
+            tie_to_job_lifetime(app, &child);
             tauri::async_runtime::spawn(async move {
                 while let Some(event) = rx.recv().await {
                     match event {
@@ -202,6 +295,7 @@ fn spawn_llama(app: &tauri::AppHandle, model_path: &std::path::Path) -> Option<C
     // needed here. No-op on macOS (single Metal binary; the dir is absent there).
     match cmd.spawn() {
         Ok((mut rx, child)) => {
+            tie_to_job_lifetime(app, &child);
             let app = app.clone();
             let spawned_at = std::time::Instant::now();
             tauri::async_runtime::spawn(async move {
@@ -447,6 +541,18 @@ fn main() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![retry_asset_setup, get_asset_setup_status])
         .setup(|app| {
+            // Must happen before any sidecar spawns (ensure_assets_then_spawn
+            // below can spawn them as early as this thread yields) so the
+            // very first codesense-server/llama-server processes are covered.
+            #[cfg(target_os = "windows")]
+            {
+                let job = win_job::JobGuard::new();
+                if job.is_none() {
+                    eprintln!("[main] failed to create Windows job object -- sidecars won't be tied to this process's lifetime; an ungraceful exit could leave them running");
+                }
+                *app.state::<AppState>().job.lock().unwrap() = job;
+            }
+
             let handle = app.handle().clone();
             ensure_assets_then_spawn(handle);
 
