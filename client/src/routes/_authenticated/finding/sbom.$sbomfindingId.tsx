@@ -1,6 +1,7 @@
+import { Button } from '@/components/atomic/button';
 import { DotsLoader } from '@/components/atomic/loader';
 import { useFindingDetails } from '@/hooks/use-finding';
-import { createFileRoute, useParams } from '@tanstack/react-router';
+import { createFileRoute, useParams, useRouter } from '@tanstack/react-router';
 import { AlertTriangle, Package, Shield, CheckCircle2, Info, Activity, Target } from 'lucide-react';
 
 export const Route = createFileRoute(
@@ -13,6 +14,7 @@ function RouteComponent() {
   const { sbomfindingId } = useParams({
     from: '/_authenticated/finding/sbom/$sbomfindingId',
   });
+  const router = useRouter();
   const { data, isLoading } = useFindingDetails(sbomfindingId);
 
   if (isLoading) return <DotsLoader />;
@@ -70,6 +72,9 @@ function RouteComponent() {
 
   return (
     <div className="min-h-screen bg-background p-4 md:p-8">
+      <Button variant="ghost" type="button" onClick={() => router.history.back()}>
+        ←  Back to Findings
+      </Button>
       <div className="space-y-6">
         {/* Hero Header with Gradient */}
         <div className="relative overflow-hidden bg-card rounded-xl border border-border shadow-lg">
