@@ -7,6 +7,18 @@ export interface StatCountDetails {
   sbom_findings: number
 }
 
+export interface CountTrend {
+  pct: number;
+  period: string;
+}
+
+export interface TopCountsTrend {
+  users: CountTrend;
+  projects: CountTrend;
+  scans: CountTrend;
+  sbom_scans: CountTrend;
+}
+
 export type SeverityData = {
   critical: number;
   high: number;
@@ -60,13 +72,25 @@ export interface ScanDistributionItem {
   color: string;
 }
 
+export interface RecentScanItem {
+  id: string;
+  type: 'code' | 'sbom';
+  project: string;
+  scan_name: string;
+  status: string;
+  findings: number;
+  created_at: string;
+}
+
 export interface DashboardResponse {
   top_counts: StatCountDetails,
+  top_counts_trend: TopCountsTrend,
   system_status: SystemStatus,
   count_by_severity: SeverityData,
   language_distribution: LanguageDistributionItem[],
   findings_trend: FindingsTrendItem[],
   top_cwe: TopCweItem[],
   scans_by_project: ScansByProjectItem[],
-  scan_distribution: ScanDistributionItem[]
+  scan_distribution: ScanDistributionItem[],
+  recent_scans: RecentScanItem[]
 }

@@ -3,8 +3,8 @@ import type { RolePermissions, PermissionRole } from "@/types/auth";
 import type { DashboardResponse } from "@/types/dashboard";
 
 class GeneralService extends BaseApiClient {
-  async fetchDashboard(): Promise<DashboardResponse> {
-    return this.get<DashboardResponse>('/api/dashboard/');
+  async fetchDashboard(trendDays: number = 7): Promise<DashboardResponse> {
+    return this.get<DashboardResponse>(`/api/dashboard/?trend_days=${trendDays}`);
   }
 
   async fetchPermissionsByRole(role: PermissionRole): Promise<RolePermissions> {

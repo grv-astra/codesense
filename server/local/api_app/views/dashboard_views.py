@@ -16,6 +16,20 @@ def _severity_defaults() -> dict:
     return {"critical": 0, "high": 0, "medium": 0, "low": 0}
 
 
+_TREND_WINDOWS = {
+    "users": (timedelta(days=7), "than last week"),
+    "projects": (timedelta(days=30), "than last month"),
+    "scans": (timedelta(days=1), "than yesterday"),
+    "sbom_scans": (timedelta(days=7), "than last week"),
+}
+
+
+def _pct_change(current: int, previous: int) -> float:
+    if previous:
+        return round((current - previous) / previous * 100, 1)
+    return 100.0 if current else 0.0
+
+
 class DashboardView(APIView):
     @require_authentication()
     def get(self, request):
@@ -30,17 +44,37 @@ class DashboardView(APIView):
                     # NB: SbomFinding has no `deleted` field (no soft-delete), so count all rows.
                     "sbom_findings": SbomFinding.objects.count(),
                 },
+                "top_counts_trend": self._get_top_counts_trend(),
                 "system_status": self._get_system_status(),
                 "count_by_severity": self._get_severity_counts(),
                 "language_distribution": self._get_language_distribution(),
-                "findings_trend": self._get_findings_trend(),
+                "findings_trend": self._get_findings_trend(self._parse_trend_days(request)),
                 "top_cwe": self._get_top_cwe(),
                 "scans_by_project": self._get_scans_by_project(),
                 "scan_distribution": self._get_scan_distribution(),
+                "recent_scans": self._get_recent_scans(),
             }
             return Response(response_data, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def _get_top_counts_trend(self):
+        from local.auth_app.models.orm import User
+
+        now = datetime.now(timezone.utc)
+        querysets = {
+            "users": User.objects.filter(deleted=False),
+            "projects": Project.objects.filter(deleted=False),
+            "scans": Scan.objects.filter(deleted=False),
+            "sbom_scans": SbomScan.objects.filter(deleted=False),
+        }
+        trend = {}
+        for key, (window, period) in _TREND_WINDOWS.items():
+            qs = querysets[key]
+            current = qs.count()
+            previous = qs.filter(created_at__lte=now - window).count()
+            trend[key] = {"pct": _pct_change(current, previous), "period": period}
+        return trend
 
     def _get_system_status(self):
         rows = (Scan.objects.filter(deleted=False).values("status")
@@ -70,8 +104,17 @@ class DashboardView(APIView):
                       key=lambda r: (-r["vulnerabilities"], -r["scans"], r["language"]))
         return rows[:8]
 
-    def _get_findings_trend(self):
-        start_date = datetime.now(timezone.utc) - timedelta(days=6)
+    TREND_DAY_OPTIONS = (7, 30, 90)
+
+    def _parse_trend_days(self, request):
+        try:
+            days = int(request.query_params.get("trend_days", 7))
+        except (TypeError, ValueError):
+            days = 7
+        return days if days in self.TREND_DAY_OPTIONS else 7
+
+    def _get_findings_trend(self, days=7):
+        start_date = datetime.now(timezone.utc) - timedelta(days=days - 1)
         grouped = {}
         for f in Finding.objects.filter(deleted=False, created_at__gte=start_date).only(
             "created_at", "severity"
@@ -85,7 +128,7 @@ class DashboardView(APIView):
                 day_bucket[sev] += 1
 
         trend = []
-        for offset in range(7):
+        for offset in range(days):
             day = (start_date + timedelta(days=offset)).date()
             key = day.strftime("%Y-%m-%d")
             values = grouped.get(key, {"critical": 0, "high": 0, "medium": 0, "low": 0})
@@ -141,6 +184,41 @@ class DashboardView(APIView):
             })
         rows.sort(key=lambda r: (-r["findings"], -r["scans"], r["project"]))
         return rows[:10]
+
+    def _get_recent_scans(self, limit=8):
+        projects = {str(p.id): p.name for p in Project.objects.filter(deleted=False)}
+
+        code_rows = (Scan.objects.filter(deleted=False)
+                     .only("id", "project_id", "scan_name", "status", "created_at", "findings")
+                     .order_by("-created_at")[:limit])
+        sbom_rows = (SbomScan.objects.filter(deleted=False)
+                     .only("id", "project_id", "scan_name", "status", "created_at", "vulnerabilities")
+                     .order_by("-created_at")[:limit])
+
+        combined = []
+        for s in code_rows:
+            combined.append({
+                "id": str(s.id),
+                "type": "code",
+                "project": projects.get(str(s.project_id), "Unknown Project"),
+                "scan_name": s.scan_name or "Code Scan",
+                "status": s.status,
+                "findings": s.findings or 0,
+                "created_at": s.created_at.isoformat(),
+            })
+        for s in sbom_rows:
+            combined.append({
+                "id": str(s.id),
+                "type": "sbom",
+                "project": projects.get(str(s.project_id), "Unknown Project"),
+                "scan_name": s.scan_name or "SBOM Scan",
+                "status": s.status,
+                "findings": s.vulnerabilities or 0,
+                "created_at": s.created_at.isoformat(),
+            })
+
+        combined.sort(key=lambda r: r["created_at"], reverse=True)
+        return combined[:limit]
 
     def _get_scan_distribution(self):
         """Code (SAST) scans vs SBOM (SCA) scans."""

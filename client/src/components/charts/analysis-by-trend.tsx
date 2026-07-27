@@ -21,7 +21,23 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
-function AnalysisTrend({ data = [] }: { data?: FindingsTrendItem[] }) {
+const RANGE_OPTIONS = [
+  { days: 7 as const, label: '7D' },
+  { days: 30 as const, label: '30D' },
+  { days: 90 as const, label: '90D' },
+];
+
+type RangeDays = 7 | 30 | 90;
+
+function AnalysisTrend({
+  data = [],
+  rangeDays = 7,
+  onRangeChange,
+}: {
+  data?: FindingsTrendItem[];
+  rangeDays?: RangeDays;
+  onRangeChange?: (days: RangeDays) => void;
+}) {
   const severityColors = {
     critical: '#dc2626',
     high: '#ea580c',
@@ -38,13 +54,34 @@ function AnalysisTrend({ data = [] }: { data?: FindingsTrendItem[] }) {
       dark:bg-[#2d2d2d] dark:border-[#3a3a3a] dark:shadow-[0_1px_8px_rgba(0,0,0,0.4)]
       transition-colors duration-300
     " style={{ padding: '20px 20px 14px' }}>
-      <div style={{ marginBottom: '16px' }}>
-        <div className="font-bold text-base text-gray-900 dark:text-gray-100 transition-colors duration-300">
-          Findings Trend Analysis
+      <div className="flex items-start justify-between" style={{ marginBottom: '16px' }}>
+        <div>
+          <div className="font-bold text-base text-gray-900 dark:text-gray-100 transition-colors duration-300">
+            Findings Trend Analysis
+          </div>
+          <div className="text-xs mt-0.5 text-green-500 font-medium">
+            ({latestTotal.toLocaleString()}) findings on the latest day shown.
+          </div>
         </div>
-        <div className="text-xs mt-0.5 text-green-500 font-medium">
-          ({latestTotal.toLocaleString()}) findings on the latest day shown.
-        </div>
+
+        {onRangeChange && (
+          <div className="flex rounded-md border border-gray-200 dark:border-[#3a3a3a] overflow-hidden shrink-0">
+            {RANGE_OPTIONS.map(({ days, label }) => (
+              <button
+                key={days}
+                type="button"
+                onClick={() => onRangeChange(days)}
+                className={`px-2 py-1 text-xs font-medium transition-colors ${
+                  rangeDays === days
+                    ? 'bg-red-900 dark:bg-red-800 text-white'
+                    : 'bg-transparent text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-[#3a3a3a]'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="
@@ -105,7 +142,7 @@ function AnalysisTrend({ data = [] }: { data?: FindingsTrendItem[] }) {
           <circle cx="12" cy="12" r="10" />
           <polyline points="12 6 12 12 16 14" />
         </svg>
-        last 7 days from findings collection
+        last {rangeDays} days from findings collection
       </div>
     </div>
   );

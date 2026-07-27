@@ -1,18 +1,20 @@
-import type { StatCountDetails } from '@/types/dashboard';
+import type { StatCountDetails, TopCountsTrend } from '@/types/dashboard';
 import { Link } from '@tanstack/react-router';
-import { Folder, ScanLine, ScanSearch, Users } from 'lucide-react';
+import { Folder, PackageSearch, ScanLine, ScanSearch, ShieldAlert, Users } from 'lucide-react';
 import { Card } from '../atomic/card';
 
-const DashboardCards = ({ data }: { data: StatCountDetails | undefined }) => {
+const formatTrend = (pct: number) => `${pct >= 0 ? '+' : ''}${pct}%`;
+
+const DashboardCards = ({ data, trend }: { data: StatCountDetails | undefined; trend: TopCountsTrend | undefined }) => {
 
   const cards = [
     {
       title: 'Users',
       icon: Users,
       count: data?.users ?? 0,
-      trend: '+5%',
-      trendLabel: 'than last week',
-      trendPositive: true,
+      trend: trend ? formatTrend(trend.users.pct) : '—',
+      trendLabel: trend?.users.period ?? '',
+      trendPositive: (trend?.users.pct ?? 0) >= 0,
       href: '/users/list',
       accentColor: '#bf0000',
       gradient: 'from-red-500/30 to-red-600/5'
@@ -21,9 +23,9 @@ const DashboardCards = ({ data }: { data: StatCountDetails | undefined }) => {
       title: 'Projects',
       icon: Folder,
       count: data?.projects ?? 0,
-      trend: '+3%',
-      trendLabel: 'than last month',
-      trendPositive: true,
+      trend: trend ? formatTrend(trend.projects.pct) : '—',
+      trendLabel: trend?.projects.period ?? '',
+      trendPositive: (trend?.projects.pct ?? 0) >= 0,
       href: '/project/list',
       accentColor: '#bf0000',
       gradient: 'from-red-500/30 to-red-600/5'
@@ -32,9 +34,9 @@ const DashboardCards = ({ data }: { data: StatCountDetails | undefined }) => {
       title: 'Code Scans',
       icon: ScanLine,
       count: data?.scans ?? 0,
-      trend: '-2%',
-      trendLabel: 'than yesterday',
-      trendPositive: false,
+      trend: trend ? formatTrend(trend.scans.pct) : '—',
+      trendLabel: trend?.scans.period ?? '',
+      trendPositive: (trend?.scans.pct ?? 0) >= 0,
       href: '/scan/start',
       accentColor: '#bf0000',
       gradient: 'from-red-500/30 to-red-600/5'
@@ -43,8 +45,32 @@ const DashboardCards = ({ data }: { data: StatCountDetails | undefined }) => {
       title: 'SBOM Scans',
       icon: ScanSearch,
       count: data?.sbom_scans ?? 0,
-      trend: '+1%',
-      trendLabel: 'than last week',
+      trend: trend ? formatTrend(trend.sbom_scans.pct) : '—',
+      trendLabel: trend?.sbom_scans.period ?? '',
+      trendPositive: (trend?.sbom_scans.pct ?? 0) >= 0,
+      href: '/scan/start',
+      accentColor: '#bf0000',
+      gradient: 'from-red-500/30 to-red-600/5'
+    },
+    {
+      title: 'Findings',
+      icon: ShieldAlert,
+      count: data?.findings ?? 0,
+      showTrend: false,
+      trend: '',
+      trendLabel: 'across all code scans',
+      trendPositive: true,
+      href: '/scan/start',
+      accentColor: '#bf0000',
+      gradient: 'from-red-500/30 to-red-600/5'
+    },
+    {
+      title: 'SBOM Findings',
+      icon: PackageSearch,
+      count: data?.sbom_findings ?? 0,
+      showTrend: false,
+      trend: '',
+      trendLabel: 'across all SBOM scans',
       trendPositive: true,
       href: '/scan/start',
       accentColor: '#bf0000',
@@ -58,7 +84,7 @@ const DashboardCards = ({ data }: { data: StatCountDetails | undefined }) => {
   };
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 p-3">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-3">
       {cards.map((card, index) => {
         const IconComponent = card.icon;
 
@@ -100,13 +126,15 @@ const DashboardCards = ({ data }: { data: StatCountDetails | undefined }) => {
                 
                 {/* Trend */}
                 <div className="flex items-center gap-1.5">
-                  <span
-                    className={`text-xs font-semibold ${
-                      card.trendPositive ? 'text-emerald-500' : 'text-red-400'
-                    }`}
-                  >
-                    {card.trend}
-                  </span>
+                  {card.showTrend !== false && (
+                    <span
+                      className={`text-xs font-semibold ${
+                        card.trendPositive ? 'text-emerald-500' : 'text-red-400'
+                      }`}
+                    >
+                      {card.trend}
+                    </span>
+                  )}
                   <span className="text-xs text-gray-500 dark:text-gray-400">
                     {card.trendLabel}
                   </span>
