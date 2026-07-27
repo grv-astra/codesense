@@ -53,6 +53,21 @@ def get_semgrep_rules_dir() -> str:
     return os.environ.get("SEMGREP_RULES_DIR", "").strip()
 
 
+def get_privacy_rules_dir() -> str:
+    """Custom PII/privacy rule pack shipped in-repo at scanner/rules/privacy/.
+
+    Deliberately NOT part of SEMGREP_RULES_DIR: that tree is cloned from
+    upstream github.com/semgrep/semgrep-rules and wholesale replaced on every
+    re-stage (see scripts/offline_sbom/stage_semgrep_rules.py), which would
+    silently delete hand-written rules living inside it. Resolved via __file__
+    (same pattern as cosign_paths() below) so it works unchanged in dev-from-
+    source and in the frozen app, where PyInstaller's datas= preserves the
+    scanner/rules/privacy/ layout relative to this module.
+    """
+    candidate = Path(__file__).resolve().parent.parent / "rules" / "privacy"
+    return str(candidate) if candidate.is_dir() else ""
+
+
 def cosign_paths():
     """(private_key, public_key, signing_config) for cosign, env-overridable.
 

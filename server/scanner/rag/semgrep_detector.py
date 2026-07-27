@@ -15,7 +15,7 @@ import subprocess
 from typing import Any
 
 from scanner.rag.lsast_types import SemgrepFinding
-from scanner.services.tools import get_semgrep_bin, get_semgrep_rules_dir
+from scanner.services.tools import get_privacy_rules_dir, get_semgrep_bin, get_semgrep_rules_dir
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +294,12 @@ def run_semgrep(folder_path: str) -> list[SemgrepFinding]:
     else:
         for pack in _DEFAULT_REGISTRY_PACKS:
             cmd += ["--config", pack]
+    # Layered on top of whichever rules source above: a small hand-written PII/
+    # privacy pack (CWE-359/532) shipped in-repo, kept separate from the
+    # upstream-cloned rules_dir so it survives that tree's re-staging.
+    privacy_rules_dir = get_privacy_rules_dir()
+    if privacy_rules_dir:
+        cmd += ["--config", privacy_rules_dir]
     # No "--metrics off": the bundled engine is OpenGrep, which has no telemetry
     # and rejects that flag (rc=2). Upstream Semgrep (dev/eval) telemetry is
     # disabled via SEMGREP_SEND_METRICS in the env below instead.

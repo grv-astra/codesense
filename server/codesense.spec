@@ -50,7 +50,25 @@ def _pkg_py_modules(*dotted_pkgs):
 
 hiddenimports += _pkg_py_modules("local.auth_app.urls", "local.api_app.urls")
 
+# scanner/rules/privacy/ is hand-written rule YAML (not Python), so PyInstaller's
+# import tracer never sees it -- it has to be added as data explicitly, same as
+# any other non-code resource. get_privacy_rules_dir() (scanner/services/tools.py)
+# resolves it via __file__ at runtime, which still works under onefile's
+# sys._MEIPASS extraction as long as the relative scanner/rules/privacy layout
+# is preserved here.
+def _collect_privacy_rules():
+    base = SPECPATH if "SPECPATH" in globals() else os.getcwd()
+    root = os.path.join(base, "scanner", "rules", "privacy")
+    entries = []
+    for dirpath, _dirs, files in os.walk(root):
+        rel_dir = os.path.relpath(dirpath, base)
+        for fn in files:
+            entries.append((os.path.join(dirpath, fn), rel_dir))
+    return entries
+
+
 datas = collect_data_files("rest_framework")
+datas += _collect_privacy_rules()
 
 a = Analysis(
     ["run_server.py"],

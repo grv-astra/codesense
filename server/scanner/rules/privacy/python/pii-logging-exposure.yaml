@@ -1,0 +1,31 @@
+rules:
+- id: python-pii-logging-exposure
+  languages: [python]
+  severity: ERROR
+  message: >-
+    A value that looks like personal data (based on its name) is passed
+    directly to a logging/print call. Logs are frequently retained, shipped to
+    third parties, or accessed with broader permissions than the data
+    warrants — avoid writing PII to logs, or mask/redact it first.
+  metadata:
+    cwe:
+    - 'CWE-532: Insertion of Sensitive Information into Log File'
+    category: security
+    subcategory: [privacy]
+    technology: [privacy]
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+  patterns:
+    - pattern-either:
+        - pattern: logging.$METHOD($ARG)
+        - pattern: logging.$METHOD($MSG, $ARG)
+        - pattern: $LOGGER.$METHOD($ARG)
+        - pattern: $LOGGER.$METHOD($MSG, $ARG)
+        - pattern: print($ARG)
+    - metavariable-regex:
+        metavariable: $ARG
+        # metavariable-regex anchors like re.match (start of string), so wrap in
+        # .* to match the PII-ish vocabulary anywhere in the captured expression
+        # text (e.g. "customer_ssn", "user.email", "req.body.credit_card").
+        regex: (?is).*(ssn|social_security|socialsecurity|email|credit_?card|cardnumber|card_number|cvv|passport|national_?id|driver_?licen[cs]e|date_?of_?birth|\bdob\b|phone_?number|home_?address|street_?address|mailing_?address|bank_?account|routing_?number|iban|tax_?id|medical_?record|health_?record|patient_?id).*

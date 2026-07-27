@@ -13,6 +13,23 @@
     {"case_id": "cs_sqli_unsafe", "file": "cs_sqli_unsafe.cs", "lines": [8, 8], "cwe": "CWE-89", "label": "real", "language": "csharp"},
     {"case_id": "cs_sqli_safe", "file": "cs_sqli_safe.cs", "lines": [8, 8], "cwe": "CWE-89", "label": "fake", "language": "csharp"},
     {"case_id": "kt_cmdi_unsafe", "file": "kt_cmdi_unsafe.kt", "lines": [3, 3], "cwe": "CWE-78", "label": "real", "language": "kotlin"},
-    {"case_id": "kt_cmdi_safe", "file": "kt_cmdi_safe.kt", "lines": [3, 3], "cwe": "CWE-78", "label": "fake", "language": "kotlin"}
+    {"case_id": "kt_cmdi_safe", "file": "kt_cmdi_safe.kt", "lines": [3, 3], "cwe": "CWE-78", "label": "fake", "language": "kotlin"},
+
+    {"case_id": "py_pii_log_unsafe", "file": "py_pii_log_unsafe.py", "lines": [4, 4], "cwe": "CWE-532", "label": "real", "language": "python"},
+    {"case_id": "py_pii_log_safe", "file": "py_pii_log_safe.py", "lines": [4, 4], "cwe": "CWE-532", "label": "fake", "language": "python"},
+    {"case_id": "js_pii_log_unsafe", "file": "js_pii_log_unsafe.js", "lines": [2, 2], "cwe": "CWE-532", "label": "real", "language": "javascript"},
+    {"case_id": "js_pii_log_safe", "file": "js_pii_log_safe.js", "lines": [2, 2], "cwe": "CWE-532", "label": "fake", "language": "javascript"},
+    {"case_id": "java_pii_log_unsafe", "file": "java_pii_log_unsafe.java", "lines": [4, 4], "cwe": "CWE-532", "label": "real", "language": "java"},
+    {"case_id": "java_pii_log_safe", "file": "java_pii_log_safe.java", "lines": [4, 4], "cwe": "CWE-532", "label": "fake", "language": "java"},
+    {"case_id": "php_pii_log_unsafe", "file": "php_pii_log_unsafe.php", "lines": [4, 4], "cwe": "CWE-532", "label": "real", "language": "php"},
+    {"case_id": "php_pii_log_safe", "file": "php_pii_log_safe.php", "lines": [4, 4], "cwe": "CWE-532", "label": "fake", "language": "php"},
+    {"case_id": "go_pii_log_unsafe", "file": "go_pii_log_unsafe.go", "lines": [6, 6], "cwe": "CWE-532", "label": "real", "language": "go"},
+    {"case_id": "go_pii_log_safe", "file": "go_pii_log_safe.go", "lines": [6, 6], "cwe": "CWE-532", "label": "fake", "language": "go"},
+    {"case_id": "rb_pii_log_unsafe", "file": "rb_pii_log_unsafe.rb", "lines": [3, 3], "cwe": "CWE-532", "label": "real", "language": "ruby"},
+    {"case_id": "rb_pii_log_safe", "file": "rb_pii_log_safe.rb", "lines": [3, 3], "cwe": "CWE-532", "label": "fake", "language": "ruby"},
+    {"case_id": "cs_pii_log_unsafe", "file": "cs_pii_log_unsafe.cs", "lines": [6, 6], "cwe": "CWE-532", "label": "real", "language": "csharp"},
+    {"case_id": "cs_pii_log_safe", "file": "cs_pii_log_safe.cs", "lines": [6, 6], "cwe": "CWE-532", "label": "fake", "language": "csharp"},
+    {"case_id": "kt_pii_log_unsafe", "file": "kt_pii_log_unsafe.kt", "lines": [3, 3], "cwe": "CWE-532", "label": "real", "language": "kotlin"},
+    {"case_id": "kt_pii_log_safe", "file": "kt_pii_log_safe.kt", "lines": [3, 3], "cwe": "CWE-532", "label": "fake", "language": "kotlin"}
   ]
 }

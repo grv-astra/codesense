@@ -95,6 +95,40 @@ class RunSemgrepTests(SimpleTestCase):
         findings = run_semgrep("/some/code/path")
         self.assertEqual(len(findings), 1)
 
+    @mock.patch("scanner.rag.semgrep_detector.get_privacy_rules_dir", return_value="/privacy-rules")
+    @mock.patch("scanner.rag.semgrep_detector.get_semgrep_rules_dir", return_value="/rules")
+    @mock.patch("scanner.rag.semgrep_detector.get_semgrep_bin", return_value="/bin/semgrep")
+    @mock.patch("scanner.rag.semgrep_detector.subprocess.run")
+    def test_layers_privacy_rules_config_alongside_bundled_rules(self, mock_run, _bin, _rules, _privacy):
+        mock_run.return_value = mock.Mock(returncode=0, stdout='{"results":[]}', stderr="")
+        run_semgrep("/code")
+        cmd = mock_run.call_args.args[0]
+        self.assertIn("/rules", cmd)
+        self.assertIn("/privacy-rules", cmd)
+        # both dirs get their own --config flag
+        self.assertEqual(cmd.count("--config"), 2)
+
+    @mock.patch("scanner.rag.semgrep_detector.get_privacy_rules_dir", return_value="/privacy-rules")
+    @mock.patch("scanner.rag.semgrep_detector.get_semgrep_rules_dir", return_value="")
+    @mock.patch("scanner.rag.semgrep_detector.get_semgrep_bin", return_value="/bin/semgrep")
+    @mock.patch("scanner.rag.semgrep_detector.subprocess.run")
+    def test_layers_privacy_rules_config_alongside_registry_packs(self, mock_run, _bin, _rules, _privacy):
+        mock_run.return_value = mock.Mock(returncode=0, stdout='{"results":[]}', stderr="")
+        run_semgrep("/code")
+        cmd = mock_run.call_args.args[0]
+        self.assertIn("p/security-audit", cmd)
+        self.assertIn("/privacy-rules", cmd)
+
+    @mock.patch("scanner.rag.semgrep_detector.get_privacy_rules_dir", return_value="")
+    @mock.patch("scanner.rag.semgrep_detector.get_semgrep_rules_dir", return_value="/rules")
+    @mock.patch("scanner.rag.semgrep_detector.get_semgrep_bin", return_value="/bin/semgrep")
+    @mock.patch("scanner.rag.semgrep_detector.subprocess.run")
+    def test_omits_privacy_config_when_not_bundled(self, mock_run, _bin, _rules, _privacy):
+        mock_run.return_value = mock.Mock(returncode=0, stdout='{"results":[]}', stderr="")
+        run_semgrep("/code")
+        cmd = mock_run.call_args.args[0]
+        self.assertEqual(cmd.count("--config"), 1)
+
 
 class DeriveCweTests(SimpleTestCase):
     """Layered CWE derivation: explicit -> rule-name keyword -> OWASP -> category."""
