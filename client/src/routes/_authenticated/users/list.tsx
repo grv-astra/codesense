@@ -2,10 +2,10 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { GenericTable, type TableColumn } from '@/components/molecule/generic-table';
 import { Button } from '@/components/atomic/button';
 import { Edit, Trash2 } from 'lucide-react';
-import { useState } from 'react';
 import type { User } from '@/types/auth';
 import { RoleBadge } from '@/components/atomic/enum-badge';
 import { useDeleteProfile, useUsers } from '@/hooks/use-user';
+import { useTableQueryState } from '@/hooks/use-table-query-state';
 import { ConfirmDialog } from '@/components/atomic/dialog-confirm';
 
 export const Route = createFileRoute('/_authenticated/users/list')({
@@ -15,13 +15,11 @@ export const Route = createFileRoute('/_authenticated/users/list')({
 
 function RouteComponent() {
   const usersPerPage = 10;
-  const [currentPage, setCurrentPage] = useState(1);
-  const [search, setSearch] = useState('');
+  const { page: currentPage, search, setPage: setCurrentPage, setSearch } = useTableQueryState();
   const navigate = useNavigate({ from: '/users/list' })
 
   const handleSearch = (q: string) => {
     setSearch(q);
-    setCurrentPage(1);
   };
 
   // For server-side pagination
@@ -138,6 +136,7 @@ function RouteComponent() {
       }
       onSearchChange={handleSearch}
       searchPlaceholder="Search users..."
+      initialQuery={search}
     />
   );
 }

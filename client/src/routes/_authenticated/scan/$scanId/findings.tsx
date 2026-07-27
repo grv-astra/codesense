@@ -2,10 +2,10 @@ import { createFileRoute, useNavigate, useParams } from '@tanstack/react-router'
 import { GenericTable, type TableColumn } from '@/components/molecule/generic-table';
 import { Button } from '@/components/atomic/button';
 import { Eye, Trash2 } from 'lucide-react';
-import { useState } from 'react';
 import { useDeleteFinding, useFindings, useToggleFindingApproved } from '@/hooks/use-finding';
 import type { FindingDetails } from '@/types/finding';
 import { SecurityBadge, StatusBadge } from '@/components/atomic/enum-badge';
+import { useTableQueryState } from '@/hooks/use-table-query-state';
 
 export const Route = createFileRoute('/_authenticated/scan/$scanId/findings')({
   component: FindingsComponent,
@@ -14,13 +14,11 @@ export const Route = createFileRoute('/_authenticated/scan/$scanId/findings')({
 function FindingsComponent() {
   const navigate = useNavigate();
   const findingsPerPage = 10;
-  const [currentPage, setCurrentPage] = useState(1);
-  const [search, setSearch] = useState('');
+  const { page: currentPage, search, setPage: setCurrentPage, setSearch } = useTableQueryState();
   const { scanId } = useParams({ from: '/_authenticated/scan/$scanId/findings' });
 
   const handleSearch = (q: string) => {
     setSearch(q);
-    setCurrentPage(1);
   };
 
   // Queries
@@ -146,6 +144,7 @@ function FindingsComponent() {
       filterButtonVariant="outline"
       onSearchChange={handleSearch}
       searchPlaceholder="Search findings..."
+      initialQuery={search}
     />
   );
 }

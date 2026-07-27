@@ -2,7 +2,6 @@ import { createFileRoute, useNavigate, useParams } from '@tanstack/react-router'
 import { GenericTable, type TableColumn } from '@/components/molecule/generic-table';
 import { Button } from '@/components/atomic/button';
 import { Download, Trash2 } from 'lucide-react';
-import { useState } from 'react';
 import { useDeleteScan, useScans } from '@/hooks/use-scans';
 import type { ScanDetails } from '@/types/scan';
 import { StateBadge } from '@/components/atomic/enum-badge';
@@ -11,6 +10,7 @@ import { formatTimestamp } from '@/utils/timestampFormater';
 import { AxiosError } from 'axios';
 import { toast } from 'sonner';
 import { ConfirmDialog } from '@/components/atomic/dialog-confirm';
+import { useTableQueryState } from '@/hooks/use-table-query-state';
 
 export const Route = createFileRoute(
   '/_authenticated/project/$projectId/codescan',
@@ -22,13 +22,11 @@ function RouteComponent() {
 
   const navigate = useNavigate()
   const scansPerPage = 10;
-  const [currentPage, setCurrentPage] = useState(1);
-  const [search, setSearch] = useState('');
+  const { page: currentPage, search, setPage: setCurrentPage, setSearch } = useTableQueryState();
   const { projectId } = useParams({ from: '/_authenticated/project/$projectId/codescan' });
 
   const handleSearch = (q: string) => {
     setSearch(q);
-    setCurrentPage(1);
   };
 
   // For server-side pagination
@@ -187,6 +185,7 @@ function RouteComponent() {
       filterButtonVariant="outline"
       onSearchChange={handleSearch}
       searchPlaceholder="Search scans..."
+      initialQuery={search}
     />
   );
 }

@@ -47,6 +47,8 @@ export interface GenericTableProps<T> {
   // When provided, search is SERVER-SIDE: the (debounced) query is handed back to
   // the parent (which refetches) instead of filtering the loaded rows client-side.
   onSearchChange?: (query: string) => void;
+  // Seeds the (uncontrolled) search box, e.g. restoring a query persisted in the URL.
+  initialQuery?: string;
 }
 
 export function GenericTable<T extends Record<string, any>>({
@@ -71,9 +73,10 @@ export function GenericTable<T extends Record<string, any>>({
   searchable = true,
   searchPlaceholder = 'Search...',
   onSearchChange,
+  initialQuery = '',
 }: GenericTableProps<T>) {
   const [internalCurrentPage, setInternalCurrentPage] = useState(1);
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(initialQuery);
   const [showColumnSelector, setShowColumnSelector] = useState(false);
   const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>(
     () => {

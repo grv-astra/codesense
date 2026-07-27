@@ -2,9 +2,9 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { GenericTable, type TableColumn } from '@/components/molecule/generic-table';
 import { Button } from '@/components/atomic/button';
 import { Edit, Trash2 } from 'lucide-react';
-import { useState } from 'react';
 import { formatTimestamp } from '@/utils/timestampFormater';
 import { useDeleteProject, useProjects } from '@/hooks/use-project';
+import { useTableQueryState } from '@/hooks/use-table-query-state';
 import type { ProjectDetails } from '@/types/project';
 import { ConfirmDialog } from '@/components/atomic/dialog-confirm';
 
@@ -16,12 +16,10 @@ export const Route = createFileRoute('/_authenticated/project/list')({
 function RouteComponent() {
   const navigate = useNavigate()
   const usersPerPage = 10;
-  const [currentPage, setCurrentPage] = useState(1);
-  const [search, setSearch] = useState('');
+  const { page: currentPage, search, setPage: setCurrentPage, setSearch } = useTableQueryState();
 
   const handleSearch = (q: string) => {
     setSearch(q);
-    setCurrentPage(1);
   };
 
   // For server-side pagination
@@ -129,6 +127,7 @@ function RouteComponent() {
       }
       onSearchChange={handleSearch}
       searchPlaceholder="Search projects..."
+      initialQuery={search}
     />
   );
 }

@@ -2,6 +2,7 @@ import { createFileRoute, useParams } from '@tanstack/react-router';
 import { GenericTable, type TableColumn } from '@/components/molecule/generic-table';
 import { useState } from 'react';
 import { useSbomFindings } from '@/hooks/use-finding';
+import { useTableQueryState } from '@/hooks/use-table-query-state';
 import type { SbomFindings } from '@/types/finding';
 import { SecurityBadge } from '@/components/atomic/enum-badge';
 import { Card } from '@/components/atomic/card';
@@ -151,13 +152,11 @@ function FindingDetailDialog({
 
 function FindingsComponent() {
   const findingsPerPage = 10;
-  const [currentPage, setCurrentPage] = useState(1);
-  const [search, setSearch] = useState('');
+  const { page: currentPage, search, setPage: setCurrentPage, setSearch } = useTableQueryState();
   const [selectedFinding, setSelectedFinding] = useState<SbomFindings | null>(null);
 
   const handleSearch = (q: string) => {
     setSearch(q);
-    setCurrentPage(1);
   };
 
   const { sbomscanId } = useParams({
@@ -243,6 +242,7 @@ function FindingsComponent() {
         filterButtonVariant="outline"
         onSearchChange={handleSearch}
         searchPlaceholder="Search vulnerabilities..."
+        initialQuery={search}
         onRowClick={(finding) => setSelectedFinding(finding)}
       />
     </>

@@ -5,6 +5,7 @@ import { X } from 'lucide-react';
 import { useState } from 'react';
 import { Card } from '@/components/atomic/card';
 import { useSbomLicenses } from '@/hooks/use-finding';
+import { useTableQueryState } from '@/hooks/use-table-query-state';
 import type { LicenseFinding } from '@/types/finding';
 
 export const Route = createFileRoute(
@@ -170,13 +171,11 @@ function LicenseDetailDialog({
 
 function RouteComponent() {
   const findingsPerPage = 10;
-  const [currentPage, setCurrentPage] = useState(1);
+  const { page: currentPage, search, setPage: setCurrentPage, setSearch } = useTableQueryState();
   const [selectedFinding, setSelectedFinding] = useState<LicenseFinding | null>(null);
-  const [search, setSearch] = useState('');
 
   const handleSearch = (q: string) => {
     setSearch(q);
-    setCurrentPage(1);
   };
 
   const { sbomscanId } = useParams({
@@ -272,6 +271,7 @@ function RouteComponent() {
         filterButtonVariant="outline"
         onSearchChange={handleSearch}
         searchPlaceholder="Search licenses..."
+        initialQuery={search}
         onRowClick={(finding) => setSelectedFinding(finding)}
       />
     </>
