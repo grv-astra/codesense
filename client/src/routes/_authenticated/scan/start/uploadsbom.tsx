@@ -11,6 +11,7 @@ import { useProjectNames } from '@/hooks/use-project';
 import { useSbomScan } from '@/hooks/use-scans';
 import type { CreateSBOMScanForm } from '@/types/scan';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
+import { AxiosError } from 'axios';
 import {
   AlertCircle,
   CheckCircle2,
@@ -20,6 +21,7 @@ import {
   X,
 } from 'lucide-react';
 import React, { useState } from 'react';
+import { toast } from 'sonner';
 
 export const Route = createFileRoute('/_authenticated/scan/start/uploadsbom')({
   component: RouteComponent,
@@ -163,6 +165,15 @@ function RouteComponent() {
       }, 800);
     } catch (error) {
       console.error('Error creating scan:', error);
+      if (error instanceof AxiosError && error.response) {
+        toast('Failed to start scan', {
+          description: error.response.data?.error ?? error.response.data?.detail ?? 'The server rejected the request.',
+        });
+      } else {
+        toast('Failed to start scan', {
+          description: 'An unexpected error occurred while starting the scan.',
+        });
+      }
     } finally {
       setIsSubmitting(false);
     }

@@ -87,11 +87,13 @@ class ScanCreateView(APIView):
  
             except zipfile.BadZipFile:
                 logging.error("Uploaded file is not a valid ZIP file")
+                ScanModel.update_status(scan_id, "failed")
                 shutil.rmtree(temp_dir)
                 return JsonResponse({"error": "Invalid zip file"}, status=status.HTTP_400_BAD_REQUEST)
- 
+
             except Exception as e:
                 logging.error(f"Failed to process uploaded file: {e}")
+                ScanModel.update_status(scan_id, "failed")
                 shutil.rmtree(temp_dir)
                 return JsonResponse({"detail": "Failed to process uploaded file."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
            
@@ -135,6 +137,8 @@ class ScanCreateView(APIView):
             global scan_thread
             with scan_thread_lock:
                 if scan_thread and scan_thread.is_alive():
+                    ScanModel.update_status(scan_id, "failed")
+                    shutil.rmtree(temp_dir, ignore_errors=True)
                     return JsonResponse({"detail": "Scan already in progress."}, status=status.HTTP_409_CONFLICT)
                 scan_thread = threading.Thread(target=run_scan, daemon=True)
                 scan_thread.start()
@@ -356,6 +360,7 @@ class SbomCreateView(APIView):
 
                 zip_ref.extractall(extracted_folder_path)
         except zipfile.BadZipFile:
+            SbomModel.update_status(scan_id, "failed")
             shutil.rmtree(temp_dir)
             return JsonResponse(
                 {"error": "Invalid zip file"},
@@ -364,6 +369,7 @@ class SbomCreateView(APIView):
 
         except Exception as e:
             logging.error(f"Zip processing failed: {e}")
+            SbomModel.update_status(scan_id, "failed")
             shutil.rmtree(temp_dir)
             return JsonResponse(
                 {"detail": "Failed to process uploaded file."},
@@ -419,6 +425,8 @@ class SbomCreateView(APIView):
         global scan_thread
         with scan_thread_lock:
             if scan_thread and scan_thread.is_alive():
+                SbomModel.update_status(scan_id, "failed")
+                shutil.rmtree(temp_dir, ignore_errors=True)
                 return JsonResponse(
                     {"detail": "Another scan already in progress."},
                     status=status.HTTP_409_CONFLICT,
@@ -490,6 +498,7 @@ class GrypeCreateView(APIView):
 
         except Exception as e:
             logging.error(f"Failed to save SBOM file: {e}")
+            SbomModel.update_status(scan_id, "failed")
             shutil.rmtree(temp_dir)
             return JsonResponse(
                 {"detail": "Failed to process uploaded file."},
@@ -547,6 +556,8 @@ class GrypeCreateView(APIView):
         global scan_thread
         with scan_thread_lock:
             if scan_thread and scan_thread.is_alive():
+                SbomModel.update_status(scan_id, "failed")
+                shutil.rmtree(temp_dir, ignore_errors=True)
                 return JsonResponse(
                     {"detail": "Another scan already in progress."},
                     status=status.HTTP_409_CONFLICT,
