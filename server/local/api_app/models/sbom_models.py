@@ -1,4 +1,6 @@
+import shutil
 from datetime import datetime, timezone
+from pathlib import Path
 from django.db.models import Q
 from local.api_app.models.orm import SbomScan, SbomFinding, SbomLicenseFinding
 
@@ -161,6 +163,10 @@ class SbomModel:
             deleted, _ = SbomScan.objects.filter(id=scan_id).delete()
             SbomFinding.objects.filter(scan_id=scan_id).delete()
             SbomLicenseFinding.objects.filter(scan_id=scan_id).delete()
+            # sbom_pipeline.py writes SBOM/grype/grant reports + the cosign signature
+            # bundle to output/<scan_id>/ -- remove it too, or every deleted scan
+            # leaks those artifacts on disk forever.
+            shutil.rmtree(Path("output") / str(scan_id), ignore_errors=True)
             return bool(deleted)
         except Exception:
             return False

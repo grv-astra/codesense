@@ -1,4 +1,6 @@
+import shutil
 from datetime import datetime, timezone
+from pathlib import Path
 
 from django.test import TestCase
 from local.api_app.models.sbom_models import SbomModel
@@ -51,6 +53,25 @@ class SbomModelTests(TestCase):
         SbomModel.insert_findings([{"scan_id": s["id"], "package_name": "a"}])
         self.assertTrue(SbomModel.delete_scan(s["id"]))
         self.assertEqual(SbomModel.find_sbom_findings_all(s["id"]), [])
+
+    def test_delete_scan_removes_output_directory(self):
+        # SBOM/grype/grant reports and the cosign signature bundle are written to
+        # output/<scan_id>/ by scanner/services/sbom_pipeline.py -- deleting the scan
+        # must also remove that directory, or every deleted scan leaks its artifacts
+        # on disk forever.
+        s = SbomModel.create({"project_id": "p", "scan_name": "SB"})
+        output_dir = Path("output") / s["id"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "sbom-cyclonedx.json").write_text("{}")
+        try:
+            self.assertTrue(SbomModel.delete_scan(s["id"]))
+            self.assertFalse(output_dir.exists())
+        finally:
+            shutil.rmtree(output_dir, ignore_errors=True)
+
+    def test_delete_scan_is_safe_when_output_directory_missing(self):
+        s = SbomModel.create({"project_id": "p", "scan_name": "SB"})
+        self.assertTrue(SbomModel.delete_scan(s["id"]))
 
     def test_sbom_signing_payload_is_json_serializable(self):
         # Regression: sbom_signing is a JSONField (default encoder). `verified_at`

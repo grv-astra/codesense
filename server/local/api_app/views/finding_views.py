@@ -9,35 +9,37 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from datetime import datetime
 from ..models.finding_models import FindingModel
+from ..models.scan_models import ScanModel
 from ..models.sbom_models import SbomModel
- 
+
 class FindingListCreateView(APIView):
     @require_permission("view_findings")
     def get(self, request, scan_id):
         try:
+            if not ScanModel.find_by_id(scan_id):
+                return Response({"error": "Scan not found"}, status=status.HTTP_404_NOT_FOUND)
+
             page = int(request.query_params.get("page", 1))
             limit = int(request.query_params.get("limit", 10))
- 
+
             search = request.query_params.get("search", "")
             findings = FindingModel.find_by_scan(scan_id=scan_id, page=page, limit=limit, search=search)
-            if not findings:
-                return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
             return Response(findings, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
- 
+
 class SbomFindingListCreateView(APIView):
     @require_permission("view_findings")
     def get(self, request, scan_id):
         try:
+            if not SbomModel.find_by_id(scan_id):
+                return Response({"error": "Scan not found"}, status=status.HTTP_404_NOT_FOUND)
+
             page = int(request.query_params.get("page", 1))
             limit = int(request.query_params.get("limit", 10))
- 
+
             search = request.query_params.get("search", "")
             findings = SbomModel.find_by_sbom_scan(scan_id=scan_id, page=page, limit=limit, search=search)
-            if not findings:
-                return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
-    
             return Response(findings, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -46,17 +48,17 @@ class SbomLicenseFindingList(APIView):
     @require_permission("view_findings")
     def get(self, request, scan_id):
         try:
+            if not SbomModel.find_by_id(scan_id):
+                return Response({"error": "Scan not found"}, status=status.HTTP_404_NOT_FOUND)
+
             page = int(request.query_params.get("page", 1))
             limit = int(request.query_params.get("limit", 10))
- 
+
             search = request.query_params.get("search", "")
             findings = SbomModel.find_license_findings_by_scan(scan_id=scan_id, page=page, limit=limit, search=search)
-            if not findings:
-                return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
-    
             return Response(findings, status=status.HTTP_200_OK)
         except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)  
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class ExportFindingView(APIView):
     @require_permission("create_report")
