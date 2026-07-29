@@ -82,6 +82,18 @@ class Finding(UUIDModel):
         db_table = "findings"
 
 
+class TrialUsage(UUIDModel):
+    """Single-row, monotonic counter of successfully-completed SAST scans, used to
+    enforce a trial limit. Deliberately separate from the (hard-deletable) Scan
+    rows so deleting a scan can't free a trial slot. Only ever incremented."""
+    scans_used = models.IntegerField(default=0)
+    updated_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        app_label = "api_app"
+        db_table = "trial_usage"
+
+
 class SbomScan(UUIDModel):
     project_id = models.CharField(max_length=32, db_index=True)
     scan_name = models.CharField(max_length=255, blank=True, default="")

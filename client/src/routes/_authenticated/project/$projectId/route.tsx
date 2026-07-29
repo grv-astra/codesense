@@ -7,6 +7,7 @@ import {
   SelectValue,
 } from "@/components/atomic/select";
 import { Button } from '@/components/atomic/button';
+import { useTrialStatus } from '@/hooks/use-trial';
 
 export const Route = createFileRoute('/_authenticated/project/$projectId')({
   component: RouteComponent,
@@ -17,6 +18,8 @@ function RouteComponent() {
   const location = useLocation();
   const navigate = useNavigate();
   const router = useRouter();
+  const { data: trial } = useTrialStatus();
+  const hideSbom = trial?.trial_mode === true;
   
   // Determine active tab based on current pathname
   const getActiveTab = () => {
@@ -60,7 +63,7 @@ function RouteComponent() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="codescan">Code Scan</SelectItem>
-                  <SelectItem value="sbomscan">SBOM Scan</SelectItem>
+                  {!hideSbom && <SelectItem value="sbomscan">SBOM Scan</SelectItem>}
                 </SelectContent>
               </Select>
           </div>
