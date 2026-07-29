@@ -45,6 +45,48 @@ class ToolPathTests(SimpleTestCase):
         self.assertEqual(cfg, str((base / "signing-config.json").resolve()))
 
 
+class EnsureCosignKeysTests(SimpleTestCase):
+    """Covers the fresh-install gap found on the first real client-PC delivery
+    (2026-07-20): SBOM signing needs a keypair that init_sbom_signing (manual-
+    only) is the sole generator of -- a genuinely fresh machine never has one."""
+
+    def tearDown(self):
+        os.environ.pop("COSIGN_KEY_DIR", None)
+
+    def test_generates_keys_and_config_when_missing(self):
+        with tempfile.TemporaryDirectory() as d:
+            key_dir = Path(d) / "keys"
+            with mock.patch.dict(
+                os.environ,
+                {"COSIGN_KEY_DIR": str(key_dir), "COSIGN_PASSWORD": "test-pass-123"},
+                clear=False,
+            ):
+                self.assertFalse(key_dir.exists())
+                tools.ensure_cosign_keys()
+                priv, pub, cfg = tools.cosign_paths()
+                self.assertTrue(Path(priv).exists())
+                self.assertTrue(Path(pub).exists())
+                self.assertTrue(Path(cfg).exists())
+
+    def test_noop_when_keys_already_exist(self):
+        with tempfile.TemporaryDirectory() as d:
+            key_dir = Path(d) / "keys"
+            with mock.patch.dict(
+                os.environ,
+                {"COSIGN_KEY_DIR": str(key_dir), "COSIGN_PASSWORD": "test-pass-123"},
+                clear=False,
+            ):
+                tools.ensure_cosign_keys()
+                priv, pub, _cfg = tools.cosign_paths()
+                first_priv_bytes = Path(priv).read_bytes()
+                first_pub_bytes = Path(pub).read_bytes()
+
+                tools.ensure_cosign_keys()  # second call must not regenerate
+
+                self.assertEqual(Path(priv).read_bytes(), first_priv_bytes)
+                self.assertEqual(Path(pub).read_bytes(), first_pub_bytes)
+
+
 class SemgrepResolverTests(SimpleTestCase):
     def test_semgrep_bin_uses_env_var_when_set(self):
         with mock.patch.dict(os.environ, {"SEMGREP_BIN": "/custom/path/semgrep"}, clear=False):

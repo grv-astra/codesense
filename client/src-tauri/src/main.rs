@@ -46,6 +46,23 @@ const LLAMA_PORT: &str = "8001";
 // (only first_seen/last_seen are) -- it only stops casual clock/env editing,
 // per offline_license.py's documented threat model, not a determined user.
 const LICENSE_DURATION_DAYS: &str = "30";
+// Cosign encrypts the SBOM-signing private key with this passphrase at
+// generation time and needs the identical value again to decrypt it for every
+// later sign-blob call, so it must be a fixed baked-in constant, not left
+// unset -- cosign otherwise blocks on an interactive password prompt with no
+// stdin attached to answer it. Same offline-signing threat model as
+// LICENSE_DURATION_DAYS above: this only needs to be consistent across runs
+// of THIS build, not secret.
+const COSIGN_PASSWORD: &str = "codesense-offline-sbom-signing";
+// Grype's own DB cache layout is `<GRYPE_DB_CACHE_DIR>/<schemaVersion>/vulnerability.db`
+// (it appends this subdirectory itself when reading -- confirmed via `grype.exe`'s own
+// error message, "database metadata not found: <dir>/5", when it's missing). The bundled
+// DB snapshot (resources/grype-db, staged by scripts/offline_sbom) is schema version 5.
+// Reassembling straight into GRYPE_DB_CACHE_DIR (flat, no subdirectory) -- which every
+// prior build did -- means grype can never find a valid DB there: it fails to load and
+// every SBOM scan silently reports zero vulnerabilities (license findings still work,
+// since those come from syft, not grype) with no error surfaced anywhere in the app.
+const GRYPE_DB_SCHEMA_VERSION: &str = "5";
 
 /// Windows Job Object wired with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: every
 /// process assigned to it is force-killed by the OS the instant the job's
@@ -246,6 +263,7 @@ fn spawn_backend(app: &tauri::AppHandle, grype_db_dir: &std::path::Path) -> Opti
                 .to_string(),
         )
         .env("COSIGN_KEY_DIR", keys_dir.to_string_lossy().to_string())
+        .env("COSIGN_PASSWORD", COSIGN_PASSWORD)
         .env("LICENSE_DURATION_DAYS", LICENSE_DURATION_DAYS)
         .args(["127.0.0.1", BACKEND_PORT]);
 
@@ -455,7 +473,11 @@ fn ensure_assets_then_spawn(app: tauri::AppHandle) {
             }
         };
         let model_target_dir = data_dir.join("model");
+        // `grype_target_dir` is the CACHE ROOT handed to grype as GRYPE_DB_CACHE_DIR (it
+        // appends the schema-version subdirectory itself) -- the reassembled file must
+        // therefore land one level deeper, at `grype_target_dir/<GRYPE_DB_SCHEMA_VERSION>/`.
         let grype_target_dir = data_dir.join("grype-db");
+        let grype_reassembly_dir = grype_target_dir.join(GRYPE_DB_SCHEMA_VERSION);
 
         let model_path = match reassemble_with_retry(
             &app, "model", &model_resource, &model_target_dir, &MODEL_ASSET,
@@ -473,7 +495,7 @@ fn ensure_assets_then_spawn(app: tauri::AppHandle) {
         };
 
         if let Err(e) = reassemble_with_retry(
-            &app, "grype-db", &grype_resource, &grype_target_dir, &GRYPE_DB_ASSET,
+            &app, "grype-db", &grype_resource, &grype_reassembly_dir, &GRYPE_DB_ASSET,
         ) {
             let reason = if matches!(e, ReassemblyError::ManifestMissing | ReassemblyError::ManifestCorrupt(_)) {
                 format!("reinstall required: {e}")

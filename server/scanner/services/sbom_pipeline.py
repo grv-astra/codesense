@@ -6,13 +6,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 import shutil
 from local.api_app.models.sbom_models import SbomModel
-from scanner.services.tools import tool_path, grype_offline_env, cosign_paths
+from scanner.services.tools import tool_path, grype_offline_env, cosign_paths, ensure_cosign_keys
 
 
 # ============================================================
 # SBOM SIGNING
 # ============================================================
 def _sign_sbom(sbom_path: Path, bundle_path: Path):
+    ensure_cosign_keys()
     private_key, _public_key, _signing_config = cosign_paths()
     env = dict(os.environ)
 

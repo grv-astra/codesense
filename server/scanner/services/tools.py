@@ -5,7 +5,9 @@ of the Grype vulnerability DB. Their locations are provided by the launcher via
 env vars (or Django settings); in dev we fall back to the bare command name on
 PATH. Keeping this in one place means the SBOM pipeline never hardcodes a path.
 """
+import json
 import os
+import subprocess
 from pathlib import Path
 
 from django.conf import settings
@@ -81,3 +83,38 @@ def cosign_paths():
         str((base / "cosign.pub").resolve()),
         str((base / "signing-config.json").resolve()),
     )
+
+
+def ensure_cosign_keys() -> None:
+    """Generate the cosign key pair + signing config on first use, if missing.
+
+    ``init_sbom_signing`` (the Django management command this logic mirrors)
+    is manual-only and never invoked anywhere in the packaged app's startup
+    path (main.rs, Django AppConfig, or here) -- a genuinely fresh install has
+    no keys directory at all, so the first SBOM scan would otherwise fail with
+    a cosign error and no recovery path exposed in the GUI. Called lazily from
+    _sign_sbom() so it self-heals on first real use instead of requiring an
+    undocumented manual step. Idempotent: no-ops once the files exist.
+    """
+    private_key, public_key, signing_config = cosign_paths()
+    key_dir = Path(private_key).parent
+    key_dir.mkdir(parents=True, exist_ok=True)
+
+    if not Path(private_key).exists() or not Path(public_key).exists():
+        result = subprocess.run(
+            [tool_path("cosign"), "generate-key-pair"],
+            cwd=str(key_dir),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=dict(os.environ),
+        )
+        if result.returncode != 0:
+            raise Exception(f"Cosign key generation failed: {result.stderr}")
+
+    if not Path(signing_config).exists():
+        with open(signing_config, "w", encoding="utf-8") as f:
+            json.dump(
+                {"mediaType": "application/vnd.dev.sigstore.signingconfig.v0.2+json"},
+                f, indent=2,
+            )
