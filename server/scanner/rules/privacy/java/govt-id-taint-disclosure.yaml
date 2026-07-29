@@ -1,0 +1,51 @@
+rules:
+- id: java-govt-id-taint-disclosure
+  message: >-
+    A government ID number (e.g. Aadhaar/PAN or a similar national identifier)
+    is hardcoded as a literal in source code and/or flows, unmasked, into a
+    logging/print call. Hardcoding the value bakes sensitive data into source
+    control (CWE-540); logging/printing it discloses it to anyone with
+    log/console access (CWE-359). These are high-sensitivity identifiers
+    (regulated under India's DPDP Act and similar regimes) — mask or redact
+    before the value reaches a sink, and never hardcode a real one.
+  metadata:
+    cwe:
+    - 'CWE-540: Inclusion of Sensitive Information in Source Code'
+    - 'CWE-359: Exposure of Private Personal Information to an Unauthorized Actor'
+    category: security
+    subcategory: [privacy]
+    technology: [privacy]
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: HIGH
+  severity: ERROR
+  languages: [java]
+  mode: taint
+  pattern-sources:
+  # A variable NAMED like a government ID, regardless of where its value comes from.
+  - patterns:
+    - pattern: $TYPE $VAR = $VAL;
+    - metavariable-regex:
+        metavariable: $VAR
+        regex: (?i).*(aadhaar|aadhar|uidai|pan_?number|pan_?no|pannumber).*
+  # A hardcoded STRING LITERAL shaped like a real Aadhaar (12 digits, optionally
+  # space-grouped 4-4-4) or PAN (5 letters + 4 digits + 1 letter), regardless of
+  # variable name — this is the CWE-540 "sensitive value baked into source" case.
+  - patterns:
+    - pattern: $TYPE2 $VAR2 = "$LIT";
+    - metavariable-regex:
+        metavariable: $LIT
+        regex: ^(\d{4}\s?\d{4}\s?\d{4}|[A-Z]{5}\d{4}[A-Z])$
+  pattern-sinks:
+  - pattern-either:
+    - pattern: System.out.$METHOD(...)
+    - pattern: System.err.$METHOD(...)
+    - patterns:
+      - pattern: $LOGGER.$METHOD(...)
+      - metavariable-regex:
+          # Constrained to actual logger-shaped names — an unconstrained $LOGGER
+          # also matches the source expression itself (e.g. request.getParameter(...)
+          # is shaped exactly like "$LOGGER.$METHOD(...)"), producing a spurious
+          # source-line hit alongside the real sink.
+          metavariable: $LOGGER
+          regex: (?i)^(log|logger)$
