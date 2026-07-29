@@ -38,6 +38,14 @@ class ScanFolderTests(SimpleTestCase):
         mock_lsast.assert_not_called()
         error_calls = [c for c in mock_update.call_args_list if c.kwargs.get("error")]
         self.assertTrue(error_calls)
+        # Regression: an AST failure used to leave the row's status untouched
+        # (whatever the caller set before invoking scan_folder, typically
+        # "queued") -- scan_folder returns [] normally rather than raising, so
+        # the calling view's own except-block status="failed" update is never
+        # reached either. The row was stuck "queued" forever with no way to
+        # tell it had actually failed. Must be marked failed here instead.
+        self.assertEqual(error_calls[0].kwargs.get("status"), "failed")
+        self.assertIsNotNone(error_calls[0].kwargs.get("end_time"))
         # an AST-analysis failure returns before STEP 3, so no trial slot is consumed
         mock_trial.assert_not_called()
 

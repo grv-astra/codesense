@@ -31,7 +31,16 @@ def scan_folder(folder_path, scan_id, triggered_by, scan_name):
         )
     except Exception as e:
         logger.error("AST Analysis failed: %s\n%s", e, traceback.format_exc())
-        update_progress(scan_id=scan_id, error=str(e))
+        # Returning [] here (rather than raising) means the caller's own
+        # except-block status="failed" update is never reached -- this row
+        # would otherwise stay stuck at whatever status the caller set before
+        # invoking scan_folder (typically "queued") forever. Mark it failed here.
+        update_progress(
+            scan_id=scan_id,
+            error=str(e),
+            status="failed",
+            end_time=datetime.now(timezone.utc),
+        )
         return []
 
     # ----------------------------------------------------------
