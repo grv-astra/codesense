@@ -58,7 +58,7 @@ function RouteComponent() {
               }`}
             >
               Findings
-              {scan?.findings && (
+              {!!scan?.findings && (
                 <span className="ml-2 px-2 py-1 text-xs rounded-full bg-red-100 text-primary">
                   {scan.findings}
                 </span>

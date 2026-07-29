@@ -1,7 +1,8 @@
 import { DotsLoader } from '@/components/atomic/loader';
 import { useSbomScanDetails } from '@/hooks/use-scans';
+import { useSbomLicenses } from '@/hooks/use-finding';
 import { createFileRoute, useNavigate, useParams } from '@tanstack/react-router'
-import { Shield, AlertTriangle, Package, CheckCircle, XCircle, Activity, Clock, Layers } from 'lucide-react';
+import { Shield, AlertTriangle, Package, CheckCircle, XCircle, Activity, Clock, Layers, Scale } from 'lucide-react';
 
 export const Route = createFileRoute(
   '/_authenticated/scan/sbom/$sbomscanId/updates',
@@ -35,6 +36,9 @@ function SecurityDashboard() {
 
   const { sbomscanId } = useParams({ from: '/_authenticated/scan/sbom/$sbomscanId/updates' });
   const { data, isLoading } = useSbomScanDetails(sbomscanId)
+  // Small preview only (not the full set) -- the Licenses tab already has the
+  // full paginated/searchable table; this is just an at-a-glance summary.
+  const { data: licensePreview } = useSbomLicenses(sbomscanId, { page: 1, limit: 5 });
 
   const scanData = data
 
@@ -263,6 +267,67 @@ function SecurityDashboard() {
                 );
               })}
             </div>
+          </div>
+
+          {/* License Overview */}
+          <div className="bg-card rounded-xl border border-border p-6">
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-foreground">License Overview</h2>
+                <p className="text-sm text-muted-foreground mt-1">Package licenses detected in this SBOM</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate({ to: '/scan/sbom/$sbomscanId/licenses', params: { sbomscanId: scanData.id } })}
+                className="text-sm font-medium text-primary hover:underline"
+              >
+                View all licenses →
+              </button>
+            </div>
+
+            {licensePreview && licensePreview.pagination.total > 0 ? (
+              <>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center">
+                    <Scale className="w-6 h-6 text-foreground" />
+                  </div>
+                  <div>
+                    <div className="text-3xl font-bold text-foreground">{licensePreview.pagination.total}</div>
+                    <div className="text-sm text-muted-foreground">license findings across scanned packages</div>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {licensePreview.licenses.map((finding) => (
+                    <div
+                      key={finding.id}
+                      className="flex items-center justify-between p-3 bg-muted rounded-lg text-sm"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="font-medium text-foreground truncate">{finding.package.name}</span>
+                        <span className="text-muted-foreground">v{finding.package.version}</span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-700 dark:bg-white/10 dark:text-gray-300">
+                          {finding.license?.id || '—'}
+                        </span>
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ${
+                            finding.decision === 'deny'
+                              ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                              : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                          }`}
+                        >
+                          {finding.decision}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">No license findings for this scan.</p>
+            )}
           </div>
 
           {/* Summary Footer */}

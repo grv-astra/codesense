@@ -57,7 +57,7 @@ function RouteComponent() {
               }`}
             >
               Findings
-              {scan?.vulnerabilities && (
+              {!!scan?.vulnerabilities && (
                 <span className="ml-2 px-2 py-1 text-xs rounded-full bg-red-100 text-primary">
                   {scan.vulnerabilities}
                 </span>
