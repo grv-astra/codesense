@@ -63,6 +63,14 @@ const COSIGN_PASSWORD: &str = "codesense-offline-sbom-signing";
 // every SBOM scan silently reports zero vulnerabilities (license findings still work,
 // since those come from syft, not grype) with no error surfaced anywhere in the app.
 const GRYPE_DB_SCHEMA_VERSION: &str = "5";
+// Trial mode (licenses/services/trial.py) is off by default -- normal builds
+// are unlimited. This particular client delivery is a capped trial: 2
+// successful scans total (code + SBOM share one counter), then a 403 on any
+// further scan attempt until they contact us to upgrade. Same per-delivery
+// pattern as LICENSE_DURATION_DAYS above -- edit these two constants for a
+// different trial size, or set TRIAL_MODE to "false" for an unlimited build.
+const TRIAL_MODE: &str = "true";
+const TRIAL_SCAN_LIMIT: &str = "2";
 
 /// Windows Job Object wired with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: every
 /// process assigned to it is force-killed by the OS the instant the job's
@@ -265,6 +273,8 @@ fn spawn_backend(app: &tauri::AppHandle, grype_db_dir: &std::path::Path) -> Opti
         .env("COSIGN_KEY_DIR", keys_dir.to_string_lossy().to_string())
         .env("COSIGN_PASSWORD", COSIGN_PASSWORD)
         .env("LICENSE_DURATION_DAYS", LICENSE_DURATION_DAYS)
+        .env("TRIAL_MODE", TRIAL_MODE)
+        .env("TRIAL_SCAN_LIMIT", TRIAL_SCAN_LIMIT)
         .args(["127.0.0.1", BACKEND_PORT]);
 
     match cmd.spawn() {
