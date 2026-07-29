@@ -49,6 +49,30 @@ class FindingModelTests(TestCase):
         self.assertEqual(again["confidence"], 0.92)
         self.assertEqual(again["verifier_reason"], "unsanitized concat reaches execute")
 
+    def test_persists_flow_diagram(self):
+        # Flow-diagram widget data: a list of formatted "Source/Step/Sink" strings
+        # built from the detector's dataflow trace. Must round-trip like rule_id etc.
+        steps = ["Source (line 12): request.GET['q']",
+                 "Sink (line 18): cursor.execute(query)"]
+        out = FindingModel.insert_many([self._finding(flow_diagram=steps)])
+        self.assertEqual(out[0]["flow_diagram"], steps)
+        again = FindingModel.find_by_id(out[0]["id"])
+        self.assertEqual(again["flow_diagram"], steps)
+
+    def test_flow_diagram_defaults_to_empty_list(self):
+        out = FindingModel.insert_many([self._finding()])
+        self.assertEqual(out[0]["flow_diagram"], [])
+
+    def test_persists_code_snip_start_line(self):
+        out = FindingModel.insert_many([self._finding(code_snip_start_line=10)])
+        self.assertEqual(out[0]["code_snip_start_line"], 10)
+        again = FindingModel.find_by_id(out[0]["id"])
+        self.assertEqual(again["code_snip_start_line"], 10)
+
+    def test_code_snip_start_line_defaults_to_none(self):
+        out = FindingModel.insert_many([self._finding()])
+        self.assertIsNone(out[0]["code_snip_start_line"])
+
     def test_find_by_project_via_scan_ids(self):
         from local.api_app.models.scan_models import ScanModel
         s = ScanModel.create({"project_id": "projX", "scan_name": "S"})

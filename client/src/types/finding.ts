@@ -23,6 +23,7 @@ export interface FindingDetails {
   rule_id?: string; // W7: Semgrep rule id ("" when absent)
   confidence?: number | null; // W7: verifier confidence 0..1 (null on pre-W7 / fail-open rows)
   verifier_reason?: string; // W7: LLM verifier rationale ("" when absent)
+  code_snip_start_line?: number | null; // first real source line of code_snip (null on pre-existing rows)
 }
 
 export interface CreateFindingDetails {

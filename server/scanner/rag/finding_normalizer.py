@@ -155,6 +155,21 @@ def build_dataflow_context(f: SemgrepFinding) -> DataflowContext:
     )
 
 
+def _flow_diagram_strings(dc: DataflowContext) -> list[str]:
+    """Human-readable Source/Step/Sink lines for the finding-detail flow-diagram
+    widget. Skips entries with no resolvable code so the UI never renders a
+    blank node; returns [] when nothing in the trace resolved."""
+    lines: list[str] = []
+    if dc.source_code:
+        lines.append(f"Source (line {dc.source_line}): {dc.source_code}")
+    for ln, code in dc.steps:
+        if code:
+            lines.append(f"Step (line {ln}): {code}")
+    if dc.sink_code:
+        lines.append(f"Sink (line {dc.sink_line}): {dc.sink_code}")
+    return lines
+
+
 def _cwe_number(cwe: str) -> str:
     m = re.search(r"CWE-(\d+)", cwe or "")
     return m.group(1) if m else ""
@@ -224,6 +239,7 @@ def normalize(f: SemgrepFinding, scan_id: str, triggered_by: str) -> tuple[dict,
     cvss_score, cvss_vector = derive_cvss(f.cwe, f.severity)
     num = _cwe_number(f.cwe or "")
     reference = f"https://cwe.mitre.org/data/definitions/{num}.html" if num else "NA"
+    dataflow = build_dataflow_context(f)
 
     finding = {
         "scan_id": scan_id,
@@ -236,7 +252,11 @@ def normalize(f: SemgrepFinding, scan_id: str, triggered_by: str) -> tuple[dict,
         "description": f.message[:1000] if f.message else "",
         "severity": f.severity,
         "file_path": f"{f.file_path} [{f.start_line},{f.end_line}]",
-        "code_snip": (f.code_excerpt or "")[:2000],
+        # Widened (context-padded) snippet for display when available; falls back to
+        # the exact-match excerpt (e.g. source file no longer reachable). The LLM
+        # prompts use f.code_excerpt directly, never this field.
+        "code_snip": (f.context_code or f.code_excerpt or "")[:2000],
+        "code_snip_start_line": f.context_start_line or f.start_line or 0,
         "security_risk": _build_security_risk(f),   # deterministic impact (distinct from description); LLM enriches when available
         "mitigation": _build_mitigation(f, reference),
         "status": "open",
@@ -253,5 +273,9 @@ def normalize(f: SemgrepFinding, scan_id: str, triggered_by: str) -> tuple[dict,
         "rule_id": f.rule_id,
         "confidence": None,
         "verifier_reason": "",
+        # Flow-diagram widget data — the same source/steps/sink trace already
+        # computed for the verifier prompt, formatted for display and persisted
+        # so the finding-detail UI can render it without re-running Semgrep.
+        "flow_diagram": _flow_diagram_strings(dataflow),
     }
-    return finding, build_dataflow_context(f)
+    return finding, dataflow

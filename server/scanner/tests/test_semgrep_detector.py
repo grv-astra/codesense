@@ -5,7 +5,8 @@ from unittest import mock
 from django.test import SimpleTestCase
 
 from scanner.rag.semgrep_detector import (
-    run_semgrep, parse_semgrep_json, derive_cwe, _extract_taint_trace, _read_code_lines)
+    run_semgrep, parse_semgrep_json, derive_cwe, _extract_taint_trace, _read_code_lines,
+    _read_code_lines_with_context)
 from scanner.rag.lsast_types import SemgrepFinding
 
 
@@ -252,3 +253,54 @@ class CodeSnippetRecoveryTests(SimpleTestCase):
         findings = run_semgrep(p)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].code_excerpt, "row3")   # recovered from disk
+
+
+class ReadCodeLinesWithContextTests(SimpleTestCase):
+    """Display-only widened snippet (a few lines of context around the exact
+    match) — NEVER fed to the LLM, purely for the finding-detail UI."""
+
+    def _write(self, text: str) -> str:
+        import os, tempfile
+        p = os.path.join(tempfile.mkdtemp(), "x.py")
+        Path(p).write_text(text)
+        return p
+
+    def test_pads_context_lines_around_the_match(self):
+        p = self._write("\n".join(f"row{i}" for i in range(1, 8)))  # rows 1..7
+        text, start = _read_code_lines_with_context(p, 4, 4, context=2)
+        self.assertEqual(start, 2)
+        self.assertEqual(text, "row2\nrow3\nrow4\nrow5\nrow6")
+
+    def test_clamps_at_file_boundaries(self):
+        p = self._write("row1\nrow2\nrow3")
+        text, start = _read_code_lines_with_context(p, 1, 1, context=3)
+        self.assertEqual(start, 1)
+        self.assertEqual(text, "row1\nrow2\nrow3")
+
+    def test_handles_bad_input(self):
+        self.assertEqual(_read_code_lines_with_context("/no/such/file", 1, 1), ("", 0))
+        self.assertEqual(_read_code_lines_with_context("", 0, 0), ("", 0))
+
+
+class RunSemgrepContextWideningTests(SimpleTestCase):
+    @mock.patch("scanner.rag.semgrep_detector.subprocess.run")
+    def test_run_semgrep_sets_context_code_and_start_line(self, mock_run):
+        import os, tempfile
+        p = os.path.join(tempfile.mkdtemp(), "app.py")
+        Path(p).write_text("\n".join(f"row{i}" for i in range(1, 10)))  # rows 1..9
+        doc = {"results": [{
+            "check_id": "python.lang.security.audit.tainted-sql-string",
+            "path": p,
+            "start": {"line": 5}, "end": {"line": 5},
+            "extra": {"lines": "row5", "message": "m",
+                      "severity": "ERROR", "metadata": {"cwe": ["CWE-89"]}},
+        }]}
+        mock_run.return_value = mock.Mock(returncode=0, stdout=json.dumps(doc), stderr="")
+        findings = run_semgrep(p)
+        self.assertEqual(len(findings), 1)
+        f = findings[0]
+        self.assertEqual(f.code_excerpt, "row5")           # exact match, unchanged (LLM-facing)
+        self.assertIn("row3", f.context_code)               # widened display snippet has context
+        self.assertIn("row7", f.context_code)
+        self.assertGreater(f.context_start_line, 0)
+        self.assertLess(f.context_start_line, 5)             # starts before the matched line

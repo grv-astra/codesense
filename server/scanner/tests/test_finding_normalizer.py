@@ -88,6 +88,40 @@ class NormalizeTests(SimpleTestCase):
                          "https://cwe.mitre.org/data/definitions/89.html")
         self.assertEqual(ctx.sink_line, 18)
 
+    def test_produces_flow_diagram_strings_source_step_sink(self):
+        finding_dict, _ = normalize(_sample_finding(), scan_id="s", triggered_by="u")
+        steps = finding_dict["flow_diagram"]
+        self.assertEqual(len(steps), 3)
+        self.assertIn("Source", steps[0])
+        self.assertIn("line 12", steps[0])
+        self.assertIn("request.GET['q']", steps[0])
+        self.assertIn("Step", steps[1])
+        self.assertIn("line 14", steps[1])
+        self.assertIn("Sink", steps[2])
+        self.assertIn("line 18", steps[2])
+        self.assertIn("cursor.execute", steps[2])
+
+    def test_flow_diagram_empty_when_no_trace_and_no_excerpt(self):
+        f = _sample_finding()
+        f.taint_trace = []
+        f.code_excerpt = ""
+        finding_dict, _ = normalize(f, scan_id="s", triggered_by="u")
+        self.assertEqual(finding_dict["flow_diagram"], [])
+
+    def test_code_snip_uses_context_when_available(self):
+        f = _sample_finding()
+        f.context_code = "before\nq = request.GET['q']\nquery = '...' + q\ncursor.execute(query)\nafter"
+        f.context_start_line = 10
+        finding_dict, _ = normalize(f, scan_id="s", triggered_by="u")
+        self.assertEqual(finding_dict["code_snip"], f.context_code)
+        self.assertEqual(finding_dict["code_snip_start_line"], 10)
+
+    def test_code_snip_falls_back_to_exact_match_excerpt(self):
+        f = _sample_finding()   # context_code/_start_line default "" / 0
+        finding_dict, _ = normalize(f, scan_id="s", triggered_by="u")
+        self.assertEqual(finding_dict["code_snip"], f.code_excerpt)
+        self.assertEqual(finding_dict["code_snip_start_line"], f.start_line)
+
     def test_unknown_cwe_yields_NA_reference(self):
         f = _sample_finding()
         f.cwe = ""

@@ -69,6 +69,13 @@ class Finding(UUIDModel):
     rule_id = models.CharField(max_length=512, blank=True, default="")
     confidence = models.FloatField(null=True, blank=True)
     verifier_reason = models.TextField(blank=True, default="")
+    # Flow-diagram widget data: formatted Source/Step/Sink strings from the
+    # detector's dataflow trace. Nullable/blank for back-compat with pre-existing rows.
+    flow_diagram = models.JSONField(null=True, blank=True)
+    # First real source-file line number of code_snip (which may be a context-padded
+    # window, not just the exact match) — lets the UI number lines correctly.
+    # Nullable for back-compat with pre-existing rows.
+    code_snip_start_line = models.IntegerField(null=True, blank=True)
 
     class Meta:
         app_label = "api_app"

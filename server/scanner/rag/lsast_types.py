@@ -25,6 +25,12 @@ class SemgrepFinding:
     sanitizers_observed: list[str] = field(default_factory=list)      # rule-reported sanitizers
     references: list[str] = field(default_factory=list)               # rule metadata.references URLs
     fix: str = ""                                                     # rule autofix suggestion, if any
+    # Display-only widened snippet (exact match +/- a few lines of context) and its
+    # first line number. NEVER used for LLM prompts — code_excerpt above (the exact
+    # match, unchanged) is what the verifier/enricher see; this is purely so the
+    # finding-detail UI can show a bit of surrounding code instead of just the sink line.
+    context_code: str = ""
+    context_start_line: int = 0
 
 
 @dataclass

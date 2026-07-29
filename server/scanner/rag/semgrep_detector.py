@@ -45,6 +45,35 @@ def _read_code_lines(file_path: str, start_line: int, end_line: int) -> str:
     except OSError:
         return ""
 
+
+_DISPLAY_CONTEXT_LINES = 3
+
+
+def _read_code_lines_with_context(
+    file_path: str, start_line: int, end_line: int, context: int = _DISPLAY_CONTEXT_LINES,
+) -> tuple[str, int]:
+    """Best-effort read of the matched lines PLUS a few lines of surrounding
+    context, clamped to the file's bounds. Display-only: the returned text is
+    NEVER fed to the LLM (code_excerpt, read separately, stays the exact match
+    the verifier/enricher prompts were tuned against) — this exists purely so
+    the finding-detail UI can show more than just the sink line.
+
+    Returns (widened_text, first_line_number of that text); ("", 0) on any
+    error so callers can fall back to the exact-match excerpt.
+    """
+    try:
+        if not file_path or not start_line or start_line < 1:
+            return "", 0
+        with open(file_path, "r", encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+        end = max(end_line or start_line, start_line)
+        lo = max(0, start_line - 1 - context)
+        hi = min(len(lines), end + context)
+        return "".join(lines[lo:hi]).rstrip("\n")[:2000], lo + 1
+    except OSError:
+        return "", 0
+
+
 _DEFAULT_REGISTRY_PACKS = ["p/security-audit", "p/owasp-top-ten", "p/secrets"]
 
 _TIMEOUT_SECONDS = 300
@@ -340,4 +369,11 @@ def run_semgrep(folder_path: str) -> list[SemgrepFinding]:
             recovered = _read_code_lines(f.file_path, f.start_line, f.end_line)
             if recovered:
                 f.code_excerpt = recovered
+        # Display-only widened snippet — best-effort, degrades silently to just
+        # code_excerpt (via finding_normalizer) when the source file isn't reachable.
+        context_text, context_start = _read_code_lines_with_context(
+            f.file_path, f.start_line, f.end_line)
+        if context_text:
+            f.context_code = context_text
+            f.context_start_line = context_start
     return findings
