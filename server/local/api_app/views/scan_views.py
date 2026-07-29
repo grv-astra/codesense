@@ -330,6 +330,14 @@ class SbomCreateView(APIView):
     # @require_assertion_jwt("scan", force_refresh=True)
     def post(self, request):
 
+        if not trial.can_start():
+            return JsonResponse(
+                {"detail": f"Trial limit reached — {trial.used()}/{trial.limit()} "
+                           f"scans used. Contact us to upgrade to the full version.",
+                 "trial": trial.status()},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         serializer = ScanStartSerializer(data=request.data)
         user = request.user
         triggered_by = user.get("id", "68863cf8ee93d4964a00d585")
@@ -415,6 +423,10 @@ class SbomCreateView(APIView):
                     status="completed",
                     end_time=datetime.now(timezone.utc),
                 )
+                try:
+                    trial.record_completion()
+                except Exception as exc:  # trial accounting must never sink a scan
+                    logging.warning(f"trial.record_completion failed: {exc}")
 
                 logging.info(
                     f"SBOM scan {scan_id} completed. "
@@ -471,6 +483,14 @@ class GrypeCreateView(APIView):
     @require_permission("create_scan")
     # @require_assertion_jwt("scan", force_refresh=True)
     def post(self, request):
+
+        if not trial.can_start():
+            return JsonResponse(
+                {"detail": f"Trial limit reached — {trial.used()}/{trial.limit()} "
+                           f"scans used. Contact us to upgrade to the full version.",
+                 "trial": trial.status()},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         serializer = ScanWithSbomSerializer(data=request.data)
         user = request.user
@@ -547,6 +567,10 @@ class GrypeCreateView(APIView):
                     status="completed",
                     end_time=datetime.now(timezone.utc),
                 )
+                try:
+                    trial.record_completion()
+                except Exception as exc:  # trial accounting must never sink a scan
+                    logging.warning(f"trial.record_completion failed: {exc}")
 
                 logging.info(
                     f"SBOM scan {scan_id} completed. "

@@ -1,5 +1,4 @@
 import { Card } from '@/components/atomic/card'
-import { useTrialStatus } from '@/hooks/use-trial'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Upload, Github } from 'lucide-react'
 
@@ -9,10 +8,8 @@ export const Route = createFileRoute('/_authenticated/scan/start/')({
 
 function RouteComponent() {
   const navigate = useNavigate()
-  const { data: trial } = useTrialStatus()
-  const hideSbom = trial?.trial_mode === true
 
-  const allOptions = [
+  const options = [
     { 
       id: 'zip', 
       label: 'Upload Zip', 
@@ -35,9 +32,6 @@ function RouteComponent() {
       route: '/scan/start/uploadsbom'
     },
   ]
-
-  // Hide SBOM in trial mode (also broken on the cloud build).
-  const options = hideSbom ? allOptions.filter(o => o.route !== '/scan/start/uploadsbom') : allOptions
 
   const handleSelection = (route: string) => {
     navigate({ to: route })

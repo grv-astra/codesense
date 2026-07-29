@@ -89,9 +89,8 @@ function RouteComponent() {
   const createScanMutation = useCreateScan();
   const createSbomScanMutation = useCreateSbomScan();
 
-  // Trial mode (driven by the backend): hide SBOM and cap scans.
+  // Trial mode (driven by the backend): caps scans, code and SBOM alike.
   const { data: trial } = useTrialStatus();
-  const scanTypes = trial?.trial_mode ? SCAN_TYPES.filter(t => t.value !== 'sbom') : SCAN_TYPES;
   const trialBlocked = isTrialExhausted(trial);
 
   const [formData, setFormData] = useState<CreateScanDetails>({
@@ -302,7 +301,7 @@ function RouteComponent() {
               <section>
                 <SectionHeading step={2} title="Scan type" />
                 <SelectCards
-                  options={scanTypes}
+                  options={SCAN_TYPES}
                   value={formData.scan_type}
                   onValueChange={handleScanTypeChange}
                   columns={3}

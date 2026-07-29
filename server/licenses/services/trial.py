@@ -1,19 +1,24 @@
-"""Trial gate: cap the number of successfully-completed SAST scans.
+"""Trial gate: cap the number of successfully-completed scans -- code (SAST) and
+SBOM alike, sharing one counter/limit.
 
 Enabled only when ``TRIAL_MODE=true`` (off by default, so normal/production
 deployments are unlimited). The count lives in a single monotonic ``TrialUsage``
-row — independent of the (hard-deletable) Scan rows — so a client cannot reset
-the trial by deleting scans. Enforcement is server-side; the UI count is UX.
+row — independent of the (hard-deletable) Scan/SbomScan rows — so a client
+cannot reset the trial by deleting scans. Enforcement is server-side; the UI
+count is UX. SBOM was originally hidden entirely in trial mode instead of
+being capped; it now shares the same limit as code scans rather than being a
+separate feature toggle.
 
 Counting policy: a slot is consumed only on SUCCESSFUL completion
-(``record_completion`` is called from the SAST pipeline's completion step, which
-failed scans never reach). In-progress/queued scans are counted against the
-limit at creation time so concurrent submissions can't overshoot the cap.
+(``record_completion`` is called from each pipeline's completion step, which
+failed scans never reach). In-progress/queued scans of EITHER type are counted
+against the limit at creation time so concurrent submissions (code + SBOM, or
+several of either) can't overshoot the cap.
 """
 import os
 from datetime import datetime, timezone
 
-from local.api_app.models.orm import Scan, TrialUsage
+from local.api_app.models.orm import Scan, SbomScan, TrialUsage
 
 _ACTIVE_STATUSES = ("queued", "in_progress")
 _DEFAULT_LIMIT = 2
@@ -42,9 +47,13 @@ def used() -> int:
 
 
 def in_progress() -> int:
-    """Currently running/queued SAST scans — counted against the cap so several
-    concurrent submissions (the GitHub path allows >1) can't blow past it."""
-    return Scan.objects.filter(status__in=_ACTIVE_STATUSES).count()
+    """Currently running/queued scans of either type — counted against the cap
+    so several concurrent submissions (the GitHub path allows >1, and code +
+    SBOM scans now share one limit) can't blow past it."""
+    return (
+        Scan.objects.filter(status__in=_ACTIVE_STATUSES).count()
+        + SbomScan.objects.filter(status__in=_ACTIVE_STATUSES).count()
+    )
 
 
 def can_start() -> bool:

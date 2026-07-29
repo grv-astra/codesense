@@ -1,5 +1,4 @@
 import type { StatCountDetails, TopCountsTrend } from '@/types/dashboard';
-import { useTrialStatus } from '@/hooks/use-trial';
 import { Link } from '@tanstack/react-router';
 import { Folder, PackageSearch, ScanLine, ScanSearch, ShieldAlert, Users } from 'lucide-react';
 import { Card } from '../atomic/card';
@@ -7,8 +6,6 @@ import { Card } from '../atomic/card';
 const formatTrend = (pct: number) => `${pct >= 0 ? '+' : ''}${pct}%`;
 
 const DashboardCards = ({ data, trend }: { data: StatCountDetails | undefined; trend: TopCountsTrend | undefined }) => {
-  const { data: trial } = useTrialStatus();
-  const hideSbom = trial?.trial_mode === true;
 
   const allCards = [
     {
@@ -81,10 +78,6 @@ const DashboardCards = ({ data, trend }: { data: StatCountDetails | undefined; t
     }
   ];
 
-  const cards = hideSbom
-    ? allCards.filter(c => c.title !== 'SBOM Scans' && c.title !== 'SBOM Findings')
-    : allCards;
-
   const formatCount = (count: number) => {
     if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
     return count.toLocaleString();
@@ -92,7 +85,7 @@ const DashboardCards = ({ data, trend }: { data: StatCountDetails | undefined; t
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-3">
-      {cards.map((card, index) => {
+      {allCards.map((card, index) => {
         const IconComponent = card.icon;
 
         return (

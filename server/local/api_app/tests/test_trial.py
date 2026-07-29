@@ -5,12 +5,19 @@ from unittest import mock
 from django.test import TestCase
 
 from licenses.services import trial
-from local.api_app.models.orm import Scan, TrialUsage
+from local.api_app.models.orm import Scan, SbomScan, TrialUsage
 
 
 def _mk_scan(status):
     return Scan.objects.create(
         project_id="p", scan_name="s", status=status, source="zip",
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+def _mk_sbom_scan(status):
+    return SbomScan.objects.create(
+        project_id="p", scan_name="s", status=status,
         created_at=datetime.now(timezone.utc),
     )
 
@@ -48,5 +55,27 @@ class TrialGateTests(TestCase):
     def test_completed_and_failed_scans_do_not_count_as_in_progress(self):
         _mk_scan("completed")
         _mk_scan("failed")
+        self.assertEqual(trial.in_progress(), 0)
+        self.assertTrue(trial.can_start())
+
+    @mock.patch.dict(os.environ, {"TRIAL_MODE": "true", "TRIAL_SCAN_LIMIT": "2"})
+    def test_sbom_scans_share_the_same_limit_as_code_scans(self):
+        """SBOM was previously hidden entirely in trial mode instead of being
+        capped; it now shares the same counter/limit as code scans."""
+        trial.record_completion()                   # a code scan completed, used=1
+        trial.record_completion()                   # an SBOM scan completed, used=2
+        self.assertFalse(trial.can_start())          # 2/2 -> blocked regardless of type
+
+    @mock.patch.dict(os.environ, {"TRIAL_MODE": "true", "TRIAL_SCAN_LIMIT": "2"})
+    def test_in_progress_sbom_scans_count_against_the_shared_limit(self):
+        _mk_scan("in_progress")                      # 1 in-progress code scan
+        _mk_sbom_scan("in_progress")                 # 1 in-progress SBOM scan
+        self.assertEqual(trial.in_progress(), 2)
+        self.assertFalse(trial.can_start())          # blocked -- a code + an SBOM scan already fill the cap
+
+    @mock.patch.dict(os.environ, {"TRIAL_MODE": "true", "TRIAL_SCAN_LIMIT": "2"})
+    def test_completed_and_failed_sbom_scans_do_not_count_as_in_progress(self):
+        _mk_sbom_scan("completed")
+        _mk_sbom_scan("failed")
         self.assertEqual(trial.in_progress(), 0)
         self.assertTrue(trial.can_start())
