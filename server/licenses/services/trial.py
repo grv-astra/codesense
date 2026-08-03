@@ -48,8 +48,8 @@ def used() -> int:
 
 def in_progress() -> int:
     """Currently running/queued scans of either type — counted against the cap
-    so several concurrent submissions (the GitHub path allows >1, and code +
-    SBOM scans now share one limit) can't blow past it."""
+    so a submission still in flight (code, SBOM, or GitHub -- all gated to one
+    scan at a time app-wide) can't be double-counted by a concurrent request."""
     return (
         Scan.objects.filter(status__in=_ACTIVE_STATUSES).count()
         + SbomScan.objects.filter(status__in=_ACTIVE_STATUSES).count()

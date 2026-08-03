@@ -28,12 +28,8 @@ from local.api_app.serializers.scan_serializers import ScanStartSerializer, Scan
  
 scan_thread = None
 scan_thread_lock = threading.Lock()
-# Global scan controls
-scan_lock = threading.Lock()
-active_scans = {}
-MAX_CONCURRENT_SCANS = 5
- 
- 
+
+
 MEDIA_ROOT = os.path.join(settings.BASE_DIR, "media", "scans")
 os.makedirs(MEDIA_ROOT, exist_ok=True)
  
@@ -220,16 +216,7 @@ class GitHubRepoScanView(APIView):
                 {"error": "token, username, repo, project_id are required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
- 
-        # Prevent too many concurrent scans
-        with scan_lock:
-            current_active = len([s for s in active_scans.values() if s.is_alive()])
-            if current_active >= MAX_CONCURRENT_SCANS:
-                return Response(
-                    {"detail": f"Max concurrent scans ({MAX_CONCURRENT_SCANS}) reached"},
-                    status=429
-                )
- 
+
         # DB log
         scan = ScanModel.create({
             "scan_name": scan_name,
@@ -271,18 +258,22 @@ class GitHubRepoScanView(APIView):
                 )
  
             finally:
-                with scan_lock:
-                    active_scans.pop(scan_id, None)
                 # This thread never goes through Django's request_started/
                 # request_finished signals, so its DB connection is never
                 # auto-closed -- release it explicitly.
                 close_old_connections()
 
-        t = threading.Thread(target=run_github_scan, daemon=True)
-        with scan_lock:
-            active_scans[scan_id] = t
-        t.start()
- 
+        global scan_thread
+        with scan_thread_lock:
+            if scan_thread and scan_thread.is_alive():
+                ScanModel.update_status(scan_id, "failed")
+                return Response(
+                    {"detail": "Another scan already in progress."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            scan_thread = threading.Thread(target=run_github_scan, daemon=True)
+            scan_thread.start()
+
         return Response(
             {"detail": "GitHub scan started", "scan": scan},
             status=202
