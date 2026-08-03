@@ -20,9 +20,18 @@ rules:
     - pattern-either:
         - pattern: logging.$METHOD($ARG)
         - pattern: logging.$METHOD($MSG, $ARG)
-        - pattern: $LOGGER.$METHOD($ARG)
-        - pattern: $LOGGER.$METHOD($MSG, $ARG)
         - pattern: print($ARG)
+        # $LOGGER is unconstrained -- without the $METHOD whitelist below this
+        # branch matches ANY single/double-arg method call (e.g. `dict.get("email")`,
+        # `Model.find_by_email(x)`), not just real logger calls. Scope it to
+        # method names that actually mean "log this".
+        - patterns:
+            - pattern-either:
+                - pattern: $LOGGER.$METHOD($ARG)
+                - pattern: $LOGGER.$METHOD($MSG, $ARG)
+            - metavariable-regex:
+                metavariable: $METHOD
+                regex: (?i)^(log[a-z]*|debug|info|warn|warning|error|err|exception|critical|fatal|trace|notice|alert|emergency|write|writeline|println|printf)$
     - metavariable-regex:
         metavariable: $ARG
         # metavariable-regex anchors like re.match (start of string), so wrap in
