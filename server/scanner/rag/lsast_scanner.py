@@ -147,6 +147,25 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str,
 
     visible: list[dict] = []
     filtered: list[dict] = []
+    total = len(sem_findings)
+    processed = 0
+
+    def _persist(outcome):
+        nonlocal processed
+        processed += 1
+        if outcome is not None:
+            if outcome.action == "suppress":
+                filtered.append(outcome.finding)
+            else:
+                visible.append(outcome.finding)
+                # A persistence hiccup on one finding must not sink the whole scan.
+                try:
+                    save_findings_to_db([outcome.finding])
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("LSAST: incremental persist failed: %s", exc)
+        # Runs for every attempted finding (errored/suppressed/visible alike) so
+        # the progress bar reflects real work done, not just visible findings.
+        update_progress(scan_id, scanned=processed, total=total, findings=len(visible))
 
     # The per-finding LLM work (verify + enrich) is the wall-time bottleneck.
     # Run it concurrently across findings with a small, bounded worker pool —
@@ -157,37 +176,36 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str,
     # `ex.map` preserves input order, so the visible/filtered partition is
     # identical to the serial path regardless of completion order. A single
     # worker (LSAST_MAX_WORKERS=1) or a single finding takes the serial branch.
+    # Persisting each result as ex.map yields it (rather than collecting into a
+    # list first) is what makes persistence progressive instead of batched.
     workers = _max_workers()
+    cancelled = False
     if workers > 1 and len(sem_findings) > 1:
-        with ThreadPoolExecutor(max_workers=workers,
-                                thread_name_prefix="lsast") as ex:
-            outcomes = list(ex.map(
-                lambda sf: _process_one(sf, scan_id, triggered_by, llm_ok),
-                sem_findings))
-    else:
-        outcomes = [_process_one(sf, scan_id, triggered_by, llm_ok)
-                    for sf in sem_findings]
-
-    # Partition + persist serially, in detector order, on this thread. Keeping
-    # save/progress out of the pool avoids cross-thread DB sessions and keeps the
-    # incremental "findings appear live" semantics (count grows as we persist).
-    for outcome in outcomes:
-        if outcome is None:                 # this finding errored in _process_one
-            continue
-        if outcome.action == "suppress":
-            filtered.append(outcome.finding)
-            continue
-        visible.append(outcome.finding)
-
-        # A persistence hiccup on one finding must not sink the whole scan.
+        ex = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="lsast")
         try:
-            save_findings_to_db([outcome.finding])
-            update_progress(scan_id, findings=len(visible))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("LSAST: incremental persist failed: %s", exc)
+            for outcome in ex.map(
+                    lambda sf: _process_one(sf, scan_id, triggered_by, llm_ok), sem_findings):
+                _persist(outcome)
+                if cancel_event is not None and cancel_event.is_set():
+                    cancelled = True
+                    break
+        finally:
+            # On cancel: don't wait for/run not-yet-started work; already-started
+            # calls (bounded by `workers`) finish on their own and their results
+            # are simply never persisted, since we've stopped consuming the
+            # iterator. On the normal path this is identical to the old `with`
+            # block's default wait=True behavior.
+            ex.shutdown(wait=not cancelled, cancel_futures=cancelled)
+    else:
+        for sf in sem_findings:
+            _persist(_process_one(sf, scan_id, triggered_by, llm_ok))
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                break
 
     logger.info(
-        "LSAST done: %d Semgrep → %d visible (%d needs_review) + %d filtered",
+        "LSAST done%s: %d Semgrep -> %d visible (%d needs_review) + %d filtered",
+        " (cancelled)" if cancelled else "",
         len(sem_findings),
         len(visible),
         sum(1 for f in visible if f.get("status") == "needs_review"),
