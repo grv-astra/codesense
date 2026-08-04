@@ -19,6 +19,12 @@ def fingerprint(sf: SemgrepFinding) -> str:
     wording update shouldn't invalidate an existing checkpoint) -- file_path +
     start_line + rule_id is what actually identifies "the same match" across
     two detector runs over the same source.
+
+    Joined with a NUL byte, not ":" -- NUL can't appear in a filename on any
+    platform, so unlike a plain "f:g:h" string join this can't produce the
+    same fingerprint for two different (file_path, start_line, rule_id)
+    triples via a differently-placed delimiter (e.g. a colon inside a POSIX
+    filename).
     """
-    raw = f"{sf.file_path}:{sf.start_line}:{sf.rule_id}"
+    raw = "\x00".join((sf.file_path, str(sf.start_line), sf.rule_id))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()

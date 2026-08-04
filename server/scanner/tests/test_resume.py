@@ -39,3 +39,10 @@ class FingerprintTests(SimpleTestCase):
         fp = fingerprint(_finding())
         self.assertEqual(len(fp), 64)
         int(fp, 16)  # raises ValueError if not valid hex
+
+    def test_delimiter_in_fields_does_not_cause_false_collision(self):
+        # A naive ":".join would make these two different findings hash the
+        # same: "dir:1" + ":" + "2" + ":" + "rule" == "dir" + ":" + "1" + ":" + "2:rule"
+        a = fingerprint(_finding(file_path="dir:1", start_line=2, rule_id="rule"))
+        b = fingerprint(_finding(file_path="dir", start_line=1, rule_id="2:rule"))
+        self.assertNotEqual(a, b)
