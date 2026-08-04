@@ -307,6 +307,24 @@ class GitHubRepoScanView(APIView):
         )
 
 
+class ScanCancelView(APIView):
+    @require_permission("delete_scan")
+    def post(self, request, scan_id):
+        scan = ScanModel.find_by_id(scan_id=scan_id)
+        if not scan:
+            return JsonResponse({"error": "Scan not found"}, status=status.HTTP_404_NOT_FOUND)
+        if scan["status"] not in ("queued", "in_progress"):
+            return JsonResponse(
+                {"detail": f"Scan is {scan['status']}, nothing to cancel."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        Scan.objects.filter(id=scan_id).update(cancel_requested=True)
+        event = _cancel_events.get(scan_id)
+        if event is not None:
+            event.set()
+        return JsonResponse({"detail": "Cancellation requested."}, status=status.HTTP_202_ACCEPTED)
+
+
 class ModelHealthView(APIView):
     @require_permission("view_scans")
     def get(self, request):

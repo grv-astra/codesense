@@ -296,3 +296,52 @@ class BackgroundPipelineSourceRetentionTests(TransactionTestCase):
         scan = Scan.objects.get(scan_name="gh-clone-fail")
         self.assertEqual(scan.status, "failed")
         self.assertEqual(scan.source_path, "")
+
+
+class ScanCancelViewTests(TestCase):
+    def _make_scan(self, status="in_progress"):
+        from datetime import datetime, timezone
+        return Scan.objects.create(
+            project_id="p1", scan_name="cancel-me", status=status,
+            created_at=datetime.now(timezone.utc), deleted=False,
+        )
+
+    def _cancel_request(self, scan_id):
+        factory = APIRequestFactory()
+        django_request = factory.post(f"/api/scans/{scan_id}/cancel/")
+        request = Request(django_request, parsers=[JSONParser()])
+        request.user = {"id": "tester"}
+        return request
+
+    def test_sets_cancel_requested_and_returns_202(self):
+        from local.api_app.views.scan_views import ScanCancelView
+        scan = self._make_scan()
+        request = self._cancel_request(scan.id)
+        response = ScanCancelView.post.__wrapped__(ScanCancelView(), request, scan_id=scan.id)
+        self.assertEqual(response.status_code, 202)
+        scan.refresh_from_db()
+        self.assertTrue(scan.cancel_requested)
+
+    def test_sets_the_in_memory_event_for_the_running_scan(self):
+        from local.api_app.views import scan_views
+        from local.api_app.views.scan_views import ScanCancelView
+        scan = self._make_scan()
+        event = threading.Event()
+        scan_views._cancel_events[scan.id] = event
+        self.addCleanup(scan_views._cancel_events.pop, scan.id, None)
+        request = self._cancel_request(scan.id)
+        ScanCancelView.post.__wrapped__(ScanCancelView(), request, scan_id=scan.id)
+        self.assertTrue(event.is_set())
+
+    def test_404_for_unknown_scan(self):
+        from local.api_app.views.scan_views import ScanCancelView
+        request = self._cancel_request("no-such-id")
+        response = ScanCancelView.post.__wrapped__(ScanCancelView(), request, scan_id="no-such-id")
+        self.assertEqual(response.status_code, 404)
+
+    def test_409_for_already_terminal_scan(self):
+        from local.api_app.views.scan_views import ScanCancelView
+        scan = self._make_scan(status="completed")
+        request = self._cancel_request(scan.id)
+        response = ScanCancelView.post.__wrapped__(ScanCancelView(), request, scan_id=scan.id)
+        self.assertEqual(response.status_code, 409)
