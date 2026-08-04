@@ -20,7 +20,10 @@ class ScanFolderTests(SimpleTestCase):
         self.assertEqual(result, ["finding"])
         # AST metrics recorded, LSAST detection invoked
         mock_ast.assert_called_once_with("/x")
-        mock_lsast.assert_called_once_with("/x", "s1", "user-1")
+        mock_lsast.assert_called_once_with(
+            "/x", "s1", "user-1",
+            skip_fingerprints=frozenset(), cancel_event=None,
+        )
         # a completed-status update happened with the visible findings count
         completed = [c for c in mock_update.call_args_list if c.kwargs.get("status") == "completed"]
         self.assertEqual(len(completed), 1)
@@ -43,8 +46,10 @@ class ScanFolderTests(SimpleTestCase):
         # "queued") -- scan_folder returns [] normally rather than raising, so
         # the calling view's own except-block status="failed" update is never
         # reached either. The row was stuck "queued" forever with no way to
-        # tell it had actually failed. Must be marked failed here instead.
-        self.assertEqual(error_calls[0].kwargs.get("status"), "failed")
+        # tell it had actually failed. Must be marked "interrupted" here
+        # instead of "failed" -- the extracted source is retained regardless
+        # of this failure (see scan_views.py), so resuming is always safe.
+        self.assertEqual(error_calls[0].kwargs.get("status"), "interrupted")
         self.assertIsNotNone(error_calls[0].kwargs.get("end_time"))
         # an AST-analysis failure returns before STEP 3, so no trial slot is consumed
         mock_trial.assert_not_called()
@@ -67,3 +72,42 @@ class ScanFolderTests(SimpleTestCase):
         # The legacy engine + SCAN_ENGINE flag were removed; LSAST is the only path.
         self.assertFalse(hasattr(scanner_module, "_legacy_scan_folder"))
         self.assertFalse(hasattr(scanner_module, "_lsast_scan_folder"))
+
+    @mock.patch.object(scanner_module, "lsast_scan_folder")
+    @mock.patch.object(scanner_module, "analyze_folder", side_effect=RuntimeError("ast boom"))
+    @mock.patch.object(scanner_module, "update_progress")
+    def test_ast_failure_now_marks_interrupted_not_failed(self, mock_progress, _analyze, _lsast):
+        scanner_module.scan_folder(folder_path="/tmp/code", scan_id="s1", triggered_by="u1", scan_name="n")
+        # Find the call that set the terminal status.
+        status_calls = [c.kwargs.get("status") for c in mock_progress.call_args_list
+                        if c.kwargs.get("status")]
+        self.assertIn("interrupted", status_calls)
+        self.assertNotIn("failed", status_calls)
+
+    @mock.patch.object(scanner_module, "lsast_scan_folder")
+    @mock.patch.object(scanner_module, "analyze_folder",
+                       return_value={"total_files": 1, "total_functions": 1, "total_loc": 10, "languages": ["python"]})
+    @mock.patch.object(scanner_module, "update_progress")
+    def test_cancelled_run_marks_status_cancelled(self, mock_progress, _analyze, mock_lsast):
+        import threading
+        cancel_event = threading.Event()
+        cancel_event.set()  # already cancelled by the time lsast_scan_folder returns
+        mock_lsast.return_value = ([{"cwe": "CWE-89"}], [])
+        scanner_module.scan_folder(folder_path="/tmp/code", scan_id="s1", triggered_by="u1", scan_name="n",
+                                    cancel_event=cancel_event)
+        status_calls = [c.kwargs.get("status") for c in mock_progress.call_args_list
+                        if c.kwargs.get("status")]
+        self.assertIn("cancelled", status_calls)
+        self.assertNotIn("completed", status_calls)
+
+    @mock.patch("licenses.services.trial.record_completion")
+    @mock.patch.object(scanner_module, "lsast_scan_folder")
+    @mock.patch.object(scanner_module, "analyze_folder",
+                       return_value={"total_files": 1, "total_functions": 1, "total_loc": 10, "languages": ["python"]})
+    @mock.patch.object(scanner_module, "update_progress")
+    def test_skip_fingerprints_passed_through_to_lsast(self, _progress, _analyze, mock_lsast, _trial):
+        mock_lsast.return_value = ([], [])
+        skip = frozenset({"abc"})
+        scanner_module.scan_folder(folder_path="/tmp/code", scan_id="s1", triggered_by="u1", scan_name="n",
+                                    skip_fingerprints=skip)
+        self.assertEqual(mock_lsast.call_args.kwargs["skip_fingerprints"], skip)
