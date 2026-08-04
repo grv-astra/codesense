@@ -176,3 +176,21 @@ class TrialSlotNotConsumedOnFailureTests(TestCase):
         })
         GrypeCreateView.post.__wrapped__(GrypeCreateView(), request)
         self.assertEqual(trial.used(), 0)
+
+
+class SourceRetentionTests(TestCase):
+    """The extracted source must survive a scan (success or failure) instead of
+    being deleted unconditionally -- that's the whole precondition for resume."""
+
+    def test_source_path_recorded_and_retained_after_zip_scan(self):
+        good_zip = SimpleUploadedFile("good.zip", _valid_zip_bytes(), content_type="application/zip")
+        request = _multipart_request("/api/scans/create/", {
+            "scan_name": "retained-code", "project_id": "p1", "zip_file": good_zip,
+        })
+        with mock.patch("local.api_app.views.scan_views.scan_folder", return_value=[]):
+            response = ScanCreateView.post.__wrapped__(ScanCreateView(), request)
+        self.assertEqual(response.status_code, 202)
+        scan = Scan.objects.get(scan_name="retained-code")
+        self.assertTrue(scan.source_path)
+        self.assertTrue(os.path.isdir(scan.source_path))
+        self.assertTrue(os.path.isfile(os.path.join(scan.source_path, "file.txt")))

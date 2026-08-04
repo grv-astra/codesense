@@ -10,10 +10,11 @@ from django.utils.decorators import method_decorator
 from rest_framework.views import APIView
 from rest_framework import status
 from scanner.rag.scanner import scan_folder
+from scanner.rag.resume import already_done_fingerprints
 import logging
 import shutil
 import threading
- 
+
 from local.auth_app.permissions.decorators import require_permission
 from licenses.services.auth import require_assertion_jwt
 from licenses.services import trial
@@ -24,15 +25,61 @@ from scanner.rag.llm import get_llm
 from scanner.rag.progress import update_progress
 from datetime import datetime, timezone
 from local.api_app.models.sbom_models import SbomModel
+from local.api_app.models.orm import Scan
 from local.api_app.serializers.scan_serializers import ScanStartSerializer, ScanWithSbomSerializer
- 
+
 scan_thread = None
 scan_thread_lock = threading.Lock()
+# Cooperative-cancel signals for the scan currently running, keyed by scan_id.
+# Only ever has at most one live entry given the one-scan-at-a-time invariant
+# above, but keyed defensively rather than assuming that never changes.
+_cancel_events: dict[str, threading.Event] = {}
 
 
 MEDIA_ROOT = os.path.join(settings.BASE_DIR, "media", "scans")
 os.makedirs(MEDIA_ROOT, exist_ok=True)
- 
+
+
+def _run_lsast_pipeline(scan_id, source_path, triggered_by, scan_name,
+                        skip_fingerprints=frozenset(), cancel_event=None):
+    """Runs the LSAST pipeline over an already-extracted source_path and updates
+    the Scan row accordingly. Shared by a fresh scan and a resumed one -- the
+    only difference between the two call sites is what skip_fingerprints/
+    cancel_event they pass in.
+
+    Once source_path exists, any non-'completed'/'cancelled' outcome lands in
+    'interrupted' (never 'failed') -- resuming is always safe from here since
+    the source is retained regardless of how this call ends.
+    """
+    try:
+        findings = scan_folder(
+            folder_path=source_path,
+            scan_id=scan_id,
+            triggered_by=triggered_by,
+            scan_name=scan_name,
+            skip_fingerprints=skip_fingerprints,
+            cancel_event=cancel_event,
+        )
+        logging.info(f"Scan run finished. Found {len(findings) if findings else 0} vulnerabilities.")
+    except Exception as e:
+        logging.error(f"Error during scan: {e}")
+        ScanModel.update_status(scan_id, "interrupted")
+        update_progress(
+            scan_id=scan_id,
+            status="interrupted",
+            end_time=datetime.now(timezone.utc),
+            error=str(e),
+        )
+        import traceback
+        logging.error(traceback.format_exc())
+    finally:
+        _cancel_events.pop(scan_id, None)
+        # This thread never goes through Django's request_started/
+        # request_finished signals, so its DB connection is never
+        # auto-closed -- release it explicitly.
+        close_old_connections()
+
+
 @method_decorator(csrf_exempt, name='dispatch')
 class ScanCreateView(APIView):
     @require_permission("create_scan")
@@ -65,11 +112,15 @@ class ScanCreateView(APIView):
             scan = ScanModel.create(scan_data)
             scan_id = scan["id"]
  
-            # Create temporary directory for both ZIP file and extraction
-            temp_dir = tempfile.mkdtemp()
+            # Extracted source is retained (not a throwaway temp dir) so an
+            # interrupted/cancelled scan can be resumed without re-uploading.
+            scan_dir = os.path.join(MEDIA_ROOT, str(scan_id))
+            temp_dir = os.path.join(scan_dir, "upload")
+            extracted_folder_path = os.path.join(scan_dir, "source")
+            os.makedirs(temp_dir, exist_ok=True)
             temp_zip_path = os.path.join(temp_dir, zip_file.name)
-            extracted_folder_path = os.path.join(temp_dir, 'extracted')
-   
+            Scan.objects.filter(id=scan_id).update(source_path=extracted_folder_path)
+
             try:
                 # Save uploaded ZIP file
                 with open(temp_zip_path, 'wb+') as f:
@@ -92,61 +143,31 @@ class ScanCreateView(APIView):
             except zipfile.BadZipFile:
                 logging.error("Uploaded file is not a valid ZIP file")
                 ScanModel.update_status(scan_id, "failed")
-                shutil.rmtree(temp_dir)
+                shutil.rmtree(scan_dir, ignore_errors=True)
                 return JsonResponse({"error": "Invalid zip file"}, status=status.HTTP_400_BAD_REQUEST)
 
             except Exception as e:
                 logging.error(f"Failed to process uploaded file: {e}")
                 ScanModel.update_status(scan_id, "failed")
-                shutil.rmtree(temp_dir)
+                shutil.rmtree(scan_dir, ignore_errors=True)
                 return JsonResponse({"detail": "Failed to process uploaded file."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-           
-            # Start scan in background thread
-            def run_scan():
-                try:
-                    logging.info(f"Starting scan with scan_name={scan_name}")
-                   
-                    # Call scan_folder with extracted folder path
-                    findings = scan_folder(
-                        folder_path=extracted_folder_path,
-                        scan_id=scan_id,
-                        triggered_by=triggered_by,
-                        scan_name=scan_name,
-                    )
-                    logging.info(f"Scan completed successfully. Found {len(findings) if findings else 0} vulnerabilities.")
-                   
-                except Exception as e:
-                    logging.error(f"Error during scan: {e}")
-                    ScanModel.update_status(scan_id, "failed")
-                    update_progress(
-                        scan_id=scan_id,
-                        status="failed",
-                        end_time=datetime.now(timezone.utc),
-                        error=str(e),
-                    )
-                    import traceback
-                    logging.error(traceback.format_exc())
-                finally:
-                    # Cleanup temp files and directory
-                    try:
-                        shutil.rmtree(temp_dir)
-                        logging.info(f"Cleaned up temporary directory: {temp_dir}")
-                    except Exception as e:
-                        logging.error(f"Error cleaning up temporary files: {e}")
-                    # This thread never goes through Django's request_started/
-                    # request_finished signals, so its DB connection is never
-                    # auto-closed -- release it explicitly.
-                    close_old_connections()
 
             global scan_thread
             with scan_thread_lock:
                 if scan_thread and scan_thread.is_alive():
                     ScanModel.update_status(scan_id, "failed")
-                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    shutil.rmtree(scan_dir, ignore_errors=True)
                     return JsonResponse({"detail": "Scan already in progress."}, status=status.HTTP_409_CONFLICT)
-                scan_thread = threading.Thread(target=run_scan, daemon=True)
+                cancel_event = threading.Event()
+                _cancel_events[scan_id] = cancel_event
+                scan_thread = threading.Thread(
+                    target=_run_lsast_pipeline,
+                    args=(scan_id, extracted_folder_path, triggered_by, scan_name),
+                    kwargs={"cancel_event": cancel_event},
+                    daemon=True,
+                )
                 scan_thread.start()
- 
+
             return JsonResponse({"detail": "Scan started successfully.", "scan": scan}, status=status.HTTP_202_ACCEPTED)
         else:
             return JsonResponse(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -232,32 +253,34 @@ class GitHubRepoScanView(APIView):
             try:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
- 
-                # Download repo → return folder_path
+
                 result = loop.run_until_complete(
                     scan_github_repo(token, username, repo, branch)
                 )
- 
                 folder_path = result["folder_path"]
- 
-                scan_folder(
+                Scan.objects.filter(id=scan_id).update(source_path=folder_path)
+
+                cancel_event = _cancel_events.get(scan_id)
+                findings = scan_folder(
                     folder_path=folder_path,
                     scan_id=scan_id,
                     triggered_by=triggered_by,
-                    scan_name=scan_name
+                    scan_name=scan_name,
+                    cancel_event=cancel_event,
                 )
- 
+
             except Exception as e:
                 logging.error(f"GitHub scan failed: {e}")
-                ScanModel.update_status(scan_id, "failed")
+                ScanModel.update_status(scan_id, "interrupted")
                 update_progress(
                     scan_id=scan_id,
-                    status="failed",
+                    status="interrupted",
                     end_time=datetime.now(timezone.utc),
                     error=str(e),
                 )
- 
+
             finally:
+                _cancel_events.pop(scan_id, None)
                 # This thread never goes through Django's request_started/
                 # request_finished signals, so its DB connection is never
                 # auto-closed -- release it explicitly.
@@ -271,6 +294,7 @@ class GitHubRepoScanView(APIView):
                     {"detail": "Another scan already in progress."},
                     status=status.HTTP_409_CONFLICT,
                 )
+            _cancel_events[scan_id] = threading.Event()
             scan_thread = threading.Thread(target=run_github_scan, daemon=True)
             scan_thread.start()
 
