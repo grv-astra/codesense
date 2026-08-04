@@ -1,11 +1,13 @@
 import io
 import os
+import shutil
+import tempfile
 import threading
 import zipfile
 from unittest import mock
 
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory
@@ -13,7 +15,7 @@ from rest_framework.test import APIRequestFactory
 from licenses.services import trial
 from local.api_app.models.orm import Scan, SbomScan
 from local.api_app.views import scan_views
-from local.api_app.views.scan_views import GrypeCreateView, ScanCreateView, SbomCreateView
+from local.api_app.views.scan_views import GitHubRepoScanView, GrypeCreateView, ScanCreateView, SbomCreateView
 
 
 def _multipart_request(url, data):
@@ -26,6 +28,25 @@ def _multipart_request(url, data):
     request = Request(django_request, parsers=[MultiPartParser(), FormParser(), JSONParser()])
     request.user = {"id": "tester"}
     return request
+
+
+def _json_request(url, data):
+    """Like _multipart_request but for views (GitHubRepoScanView) that read
+    request.data as JSON rather than multipart form fields."""
+    factory = APIRequestFactory()
+    django_request = factory.post(url, data=data, format="json")
+    request = Request(django_request, parsers=[JSONParser(), FormParser(), MultiPartParser()])
+    request.user = {"id": "tester"}
+    return request
+
+
+def _join_scan_thread(timeout=5):
+    """The pipeline (ScanCreateView/GitHubRepoScanView) runs in a daemon
+    background thread; tests that assert on its outcome (status, source_path
+    set post-clone) must wait for it to finish before reading the DB row."""
+    t = scan_views.scan_thread
+    if t is not None:
+        t.join(timeout=timeout)
 
 
 def _valid_zip_bytes():
@@ -64,6 +85,19 @@ class ScanCreationOrphanedRowTests(TestCase):
         self.assertEqual(response.status_code, 400)
         scan = Scan.objects.get(scan_name="badzip-code")
         self.assertEqual(scan.status, "failed")
+
+    def test_code_scan_bad_zip_leaves_source_path_empty(self):
+        """A pre-extraction failure has nothing to resume -- source_path must
+        stay unset, distinguishing it from the post-extraction 'interrupted'
+        case where the source really is retained on disk."""
+        bad_file = SimpleUploadedFile("bad.zip", b"not a real zip", content_type="application/zip")
+        request = _multipart_request("/api/scans/create/", {
+            "scan_name": "badzip-code-sourcepath", "project_id": "p1", "zip_file": bad_file,
+        })
+        response = ScanCreateView.post.__wrapped__(ScanCreateView(), request)
+        self.assertEqual(response.status_code, 400)
+        scan = Scan.objects.get(scan_name="badzip-code-sourcepath")
+        self.assertEqual(scan.source_path, "")
 
     def test_code_scan_thread_conflict_marks_scan_failed(self):
         self._simulate_running_scan_thread()
@@ -194,3 +228,71 @@ class SourceRetentionTests(TestCase):
         self.assertTrue(scan.source_path)
         self.assertTrue(os.path.isdir(scan.source_path))
         self.assertTrue(os.path.isfile(os.path.join(scan.source_path, "file.txt")))
+
+
+class BackgroundPipelineSourceRetentionTests(TransactionTestCase):
+    """Covers outcomes decided *inside* the background pipeline thread (status
+    transitions, post-clone source_path). Must be a TransactionTestCase, not
+    TestCase: as test_background_thread_db_cleanup.py documents, TestCase
+    wraps each test in a transaction on the main connection, so a write
+    committed by the background thread's own (separate) connection is either
+    invisible to -- or lock-contended with -- a plain TestCase's queries.
+    TransactionTestCase commits for real and flushes between tests instead."""
+
+    def test_pipeline_failure_lands_interrupted_and_retains_source_on_disk(self):
+        """The actual point of this commit: a failure *after* extraction must
+        not be 'failed' (which historically implied nothing-to-resume) and
+        must not delete the extracted source -- that's what makes resuming
+        possible in a later task."""
+        good_zip = SimpleUploadedFile("good.zip", _valid_zip_bytes(), content_type="application/zip")
+        request = _multipart_request("/api/scans/create/", {
+            "scan_name": "interrupted-code", "project_id": "p1", "zip_file": good_zip,
+        })
+        # The background thread must finish invoking the mocked scan_folder
+        # *before* the patch is torn down, or it races the `with` exit and
+        # ends up calling the real implementation instead.
+        with mock.patch("local.api_app.views.scan_views.scan_folder", side_effect=RuntimeError("boom")):
+            response = ScanCreateView.post.__wrapped__(ScanCreateView(), request)
+            self.assertEqual(response.status_code, 202)
+            _join_scan_thread()
+        scan = Scan.objects.get(scan_name="interrupted-code")
+        self.assertEqual(scan.status, "interrupted")
+        self.assertTrue(scan.source_path)
+        self.assertTrue(os.path.isdir(scan.source_path))
+        self.assertTrue(os.path.isfile(os.path.join(scan.source_path, "file.txt")))
+
+    def test_github_scan_records_source_path_after_successful_clone(self):
+        cloned_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, cloned_dir, True)
+        request = _json_request("/api/scans/github/create/", {
+            "token": "t", "username": "u", "repo": "r", "branch": "main",
+            "scan_name": "gh-retained", "project_id": "p1",
+        })
+        with mock.patch(
+            "local.api_app.views.scan_views.scan_github_repo",
+            new=mock.AsyncMock(return_value={"folder_path": cloned_dir}),
+        ), mock.patch("local.api_app.views.scan_views.scan_folder", return_value=[]):
+            response = GitHubRepoScanView.post.__wrapped__(GitHubRepoScanView(), request)
+            self.assertEqual(response.status_code, 202)
+            _join_scan_thread()
+        scan = Scan.objects.get(scan_name="gh-retained")
+        self.assertEqual(scan.source_path, cloned_dir)
+
+    def test_github_scan_clone_failure_marks_failed_with_empty_source_path(self):
+        """A clone failure means folder_path was never obtained -- source_path
+        must stay empty and the row must land in 'failed', not 'interrupted'
+        (there is nothing on disk to resume from)."""
+        request = _json_request("/api/scans/github/create/", {
+            "token": "t", "username": "u", "repo": "r", "branch": "main",
+            "scan_name": "gh-clone-fail", "project_id": "p1",
+        })
+        with mock.patch(
+            "local.api_app.views.scan_views.scan_github_repo",
+            new=mock.AsyncMock(side_effect=RuntimeError("clone boom")),
+        ):
+            response = GitHubRepoScanView.post.__wrapped__(GitHubRepoScanView(), request)
+            self.assertEqual(response.status_code, 202)
+            _join_scan_thread()
+        scan = Scan.objects.get(scan_name="gh-clone-fail")
+        self.assertEqual(scan.status, "failed")
+        self.assertEqual(scan.source_path, "")
