@@ -38,3 +38,24 @@ def already_done_fingerprints(scan_id: str) -> frozenset[str]:
         .exclude(fingerprint="")
         .values_list("fingerprint", flat=True)
     )
+
+
+def find_orphaned_scans():
+    """Scans still queued/in_progress -- by construction, crash leftovers from a
+    prior process (a fresh process hasn't started anything itself yet), unless
+    it's this same call's own reconciliation running twice -- callers should
+    only invoke this once, at real server startup (see run_server.py)."""
+    return Scan.objects.filter(status__in=["queued", "in_progress"], deleted=False)
+
+
+def reconcile_orphaned_scans() -> int:
+    """Relabel crash-orphaned scan rows so the UI reflects reality instead of a
+    permanently-stuck "queued"/"in_progress". Source/findings are left exactly
+    as they were -- this only changes the status label. Returns how many rows
+    were reconciled."""
+    count = 0
+    for scan in find_orphaned_scans():
+        new_status = "cancelled" if scan.cancel_requested else "interrupted"
+        Scan.objects.filter(id=scan.id).update(status=new_status)
+        count += 1
+    return count

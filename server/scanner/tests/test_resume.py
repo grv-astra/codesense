@@ -71,3 +71,56 @@ class AlreadyDoneFingerprintsTests(TestCase):
 
     def test_empty_for_unknown_scan(self):
         self.assertEqual(already_done_fingerprints("no-such-scan"), frozenset())
+
+
+from local.api_app.models.orm import Scan
+from scanner.rag.resume import find_orphaned_scans, reconcile_orphaned_scans
+
+
+def _make_scan(status, cancel_requested=False, deleted=False, **kw):
+    return Scan.objects.create(
+        project_id="p1", scan_name=kw.get("scan_name", "s"), status=status,
+        created_at=datetime.now(timezone.utc), deleted=deleted,
+        cancel_requested=cancel_requested,
+    )
+
+
+class FindOrphanedScansTests(TestCase):
+    def test_finds_queued_and_in_progress(self):
+        a = _make_scan("queued")
+        b = _make_scan("in_progress")
+        _make_scan("completed")
+        _make_scan("failed")
+        _make_scan("interrupted")
+        _make_scan("cancelled")
+        ids = {s.id for s in find_orphaned_scans()}
+        self.assertEqual(ids, {a.id, b.id})
+
+    def test_excludes_deleted_rows(self):
+        _make_scan("in_progress", deleted=True)
+        self.assertEqual(list(find_orphaned_scans()), [])
+
+
+class ReconcileOrphanedScansTests(TestCase):
+    def test_relabels_to_interrupted_by_default(self):
+        s = _make_scan("in_progress")
+        count = reconcile_orphaned_scans()
+        self.assertEqual(count, 1)
+        s.refresh_from_db()
+        self.assertEqual(s.status, "interrupted")
+
+    def test_relabels_to_cancelled_when_cancel_was_requested(self):
+        s = _make_scan("in_progress", cancel_requested=True)
+        reconcile_orphaned_scans()
+        s.refresh_from_db()
+        self.assertEqual(s.status, "cancelled")
+
+    def test_returns_zero_when_nothing_orphaned(self):
+        _make_scan("completed")
+        self.assertEqual(reconcile_orphaned_scans(), 0)
+
+    def test_does_not_touch_already_terminal_rows(self):
+        s = _make_scan("completed")
+        reconcile_orphaned_scans()
+        s.refresh_from_db()
+        self.assertEqual(s.status, "completed")
