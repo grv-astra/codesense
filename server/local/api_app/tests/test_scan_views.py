@@ -219,9 +219,11 @@ class TrialSlotNotConsumedOnFailureTests(TestCase):
         self.assertEqual(trial.used(), 0)
 
 
-class SourceRetentionTests(TestCase):
+class SourceRetentionTests(TransactionTestCase):
     """The extracted source must survive a scan (success or failure) instead of
-    being deleted unconditionally -- that's the whole precondition for resume."""
+    being deleted unconditionally -- that's the whole precondition for resume.
+    Must be a TransactionTestCase, not TestCase -- see
+    BackgroundPipelineSourceRetentionTests below for why."""
 
     def test_source_path_recorded_and_retained_after_zip_scan(self):
         good_zip = SimpleUploadedFile("good.zip", _valid_zip_bytes(), content_type="application/zip")
@@ -230,7 +232,8 @@ class SourceRetentionTests(TestCase):
         })
         with mock.patch("local.api_app.views.scan_views.scan_folder", return_value=[]):
             response = ScanCreateView.post.__wrapped__(ScanCreateView(), request)
-        self.assertEqual(response.status_code, 202)
+            self.assertEqual(response.status_code, 202)
+            _join_scan_thread()
         scan = Scan.objects.get(scan_name="retained-code")
         self.assertTrue(scan.source_path)
         self.assertTrue(os.path.isdir(scan.source_path))
