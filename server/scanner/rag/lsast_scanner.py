@@ -100,9 +100,17 @@ def _process_one(sf, scan_id: str, triggered_by: str, llm_ok: bool = True):
     return outcome
 
 
-def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str
+def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str,
+                       skip_fingerprints: frozenset[str] = frozenset(),
+                       cancel_event=None,
                       ) -> tuple[list[dict], list[dict]]:
-    """Run the full LSAST pipeline. Returns (visible, filtered)."""
+    """Run the full LSAST pipeline. Returns (visible, filtered).
+
+    ``skip_fingerprints`` excludes findings already verified+persisted in a
+    prior (crashed/cancelled) attempt at this same scan -- see resume.py.
+    ``cancel_event``, when set, is checked between findings so a user-requested
+    cancel stops the batch promptly instead of running it to completion.
+    """
     sem_findings = run_semgrep(folder_path)
     if not sem_findings:
         logger.info("LSAST: Semgrep produced no findings for %s", folder_path)
@@ -114,6 +122,16 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str
     sem_findings = dedupe_findings(sem_findings)
     if len(sem_findings) != raw_count:
         logger.info("LSAST: de-duplicated %d -> %d findings", raw_count, len(sem_findings))
+
+    if skip_fingerprints:
+        before = len(sem_findings)
+        sem_findings = [sf for sf in sem_findings if fingerprint(sf) not in skip_fingerprints]
+        logger.info("LSAST: resume filtered %d -> %d findings (already processed)",
+                    before, len(sem_findings))
+        if not sem_findings:
+            logger.info("LSAST: nothing left to process for %s (resume already complete)",
+                        folder_path)
+            return [], []
 
     # One up-front check: can the LLM actually do inference (valid API key)?
     # If not, we keep every deterministic finding but skip the per-finding AI

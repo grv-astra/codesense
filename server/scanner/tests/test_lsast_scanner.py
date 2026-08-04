@@ -145,6 +145,41 @@ class LsastScanFolderTests(SimpleTestCase):
         mock_verify.assert_not_called()          # AI verify skipped when LLM is down
         mock_save.assert_called_once()           # still persisted (incrementally)
 
+    @mock.patch("scanner.rag.lsast_scanner.save_findings_to_db")
+    @mock.patch("scanner.rag.lsast_scanner.verify")
+    @mock.patch("scanner.rag.lsast_scanner.run_semgrep")
+    def test_skip_fingerprints_excludes_already_done_findings(self, mock_run, mock_verify, mock_save):
+        from scanner.rag.resume import fingerprint
+        done = _sqli_finding()      # pretend this one was already processed
+        pending = _safe_orm_finding()
+        mock_run.return_value = [done, pending]
+        mock_verify.return_value = VerifierVerdict("TP", "x", 0.8)
+
+        visible, filtered = lsast_scan_folder(
+            "/tmp/code", "s1", "user-1",
+            skip_fingerprints=frozenset({fingerprint(done)}),
+        )
+        # Only the pending finding should have gone through verify/persist.
+        mock_verify.assert_called_once()
+        self.assertEqual(len(visible), 1)
+        self.assertEqual(visible[0]["fingerprint"], fingerprint(pending))
+
+    @mock.patch("scanner.rag.lsast_scanner.save_findings_to_db")
+    @mock.patch("scanner.rag.lsast_scanner.verify")
+    @mock.patch("scanner.rag.lsast_scanner.run_semgrep")
+    def test_skip_fingerprints_matching_everything_short_circuits(self, mock_run, mock_verify, mock_save):
+        from scanner.rag.resume import fingerprint
+        done = _sqli_finding()
+        mock_run.return_value = [done]
+
+        visible, filtered = lsast_scan_folder(
+            "/tmp/code", "s1", "user-1",
+            skip_fingerprints=frozenset({fingerprint(done)}),
+        )
+        self.assertEqual((visible, filtered), ([], []))
+        mock_verify.assert_not_called()
+        mock_save.assert_not_called()
+
 
 class LanguageRoutingTests(SimpleTestCase):
     def setUp(self):
