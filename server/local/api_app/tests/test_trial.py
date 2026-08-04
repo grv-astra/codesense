@@ -79,3 +79,15 @@ class TrialGateTests(TestCase):
         _mk_sbom_scan("failed")
         self.assertEqual(trial.in_progress(), 0)
         self.assertTrue(trial.can_start())
+
+    @mock.patch.dict(os.environ, {"TRIAL_MODE": "true", "TRIAL_SCAN_LIMIT": "2"})
+    def test_interrupted_scans_count_against_limit(self):
+        trial.record_completion()                   # used=1
+        _mk_scan("interrupted")                      # +1 pending-resume -> used+ip = 2
+        self.assertFalse(trial.can_start())          # blocked even though used (1) < limit (2)
+
+    @mock.patch.dict(os.environ, {"TRIAL_MODE": "true", "TRIAL_SCAN_LIMIT": "2"})
+    def test_cancelled_scans_do_not_count_against_limit(self):
+        _mk_scan("cancelled")
+        self.assertEqual(trial.in_progress(), 0)
+        self.assertTrue(trial.can_start())
