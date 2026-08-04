@@ -5,6 +5,7 @@ from django.test import SimpleTestCase
 
 from scanner.rag.lsast_scanner import lsast_scan_folder
 from scanner.rag.lsast_types import FindingReport, SemgrepFinding, VerifierVerdict
+from scanner.rag.resume import fingerprint
 
 
 def _sqli_finding() -> SemgrepFinding:
@@ -201,13 +202,13 @@ class ProcessOneTests(SimpleTestCase):
         self.assertEqual(outcome.action, "show")     # fail-open TP preserved
         mock_verify.assert_not_called()
         mock_gen.assert_not_called()
+        self.assertEqual(outcome.finding["fingerprint"], fingerprint(_sqli_finding()))
 
     @mock.patch("scanner.rag.lsast_scanner.generate_report", return_value=None)
     @mock.patch("scanner.rag.lsast_scanner.verify",
                 return_value=VerifierVerdict("TP", "unsanitized concat", 0.9))
     def test_outcome_carries_a_fingerprint(self, _v, _g):
         from scanner.rag.lsast_scanner import _process_one
-        from scanner.rag.resume import fingerprint
         sf = _sqli_finding()
         outcome = _process_one(sf, "s1", "u1")
         self.assertEqual(outcome.finding["fingerprint"], fingerprint(sf))

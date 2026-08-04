@@ -53,6 +53,8 @@ def _process_one(sf, scan_id: str, triggered_by: str, llm_ok: bool = True):
     """
     try:
         finding_dict, dataflow = normalize(sf, scan_id=scan_id, triggered_by=triggered_by)
+        # Resume checkpoint identity -- set unconditionally (independent of
+        # llm_ok) so a fail-open finding is still skippable on a later resume.
         finding_dict["fingerprint"] = fingerprint(sf)
         if llm_ok:
             verdict = verify(
