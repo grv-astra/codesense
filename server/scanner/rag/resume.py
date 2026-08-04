@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 
+from local.api_app.models.orm import Finding, Scan
 from scanner.rag.lsast_types import SemgrepFinding
 
 
@@ -28,3 +29,12 @@ def fingerprint(sf: SemgrepFinding) -> str:
     """
     raw = "\x00".join((sf.file_path, str(sf.start_line), sf.rule_id))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def already_done_fingerprints(scan_id: str) -> frozenset[str]:
+    """Fingerprints already persisted for this scan -- what a resume should skip."""
+    return frozenset(
+        Finding.objects.filter(scan_id=scan_id)
+        .exclude(fingerprint="")
+        .values_list("fingerprint", flat=True)
+    )
