@@ -14,7 +14,7 @@ from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory
 
 from licenses.services import trial
-from local.api_app.models.orm import Scan, SbomScan
+from local.api_app.models.orm import Finding, Scan, SbomScan
 from local.api_app.views import scan_views
 from local.api_app.views.scan_views import (
     GitHubRepoScanView,
@@ -459,8 +459,15 @@ class ScanResumeViewTests(TransactionTestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_409_for_a_non_resumable_status(self):
+        # The source_path/os.path.isdir check runs before the atomic status
+        # update, so source_path must point at a real directory here -- else
+        # this would trip the 410 path instead of exercising the 409 the
+        # test is actually about.
+        import tempfile
         from local.api_app.views.scan_views import ScanResumeView
-        scan = self._make_scan(status="completed", source_path="/tmp/whatever")
+        source_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, source_dir, True)
+        scan = self._make_scan(status="completed", source_path=source_dir)
         request = self._resume_request(scan.id)
         response = ScanResumeView.post.__wrapped__(ScanResumeView(), request, scan_id=scan.id)
         self.assertEqual(response.status_code, 409)
@@ -493,6 +500,30 @@ class ScanResumeViewTests(TransactionTestCase):
             _join_scan_thread()
         scan.refresh_from_db()
         self.assertFalse(scan.cancel_requested)
+
+    def test_skip_fingerprints_flows_from_persisted_findings_to_the_pipeline_call(self):
+        """already_done_fingerprints(scan_id) must actually reach the
+        pipeline's skip_fingerprints kwarg -- this is the whole point of
+        resume (skip re-verifying/re-enriching what a prior attempt already
+        persisted). Mocks _run_lsast_pipeline itself (not just scan_folder)
+        so the call's kwargs are directly inspectable."""
+        import tempfile
+        from local.api_app.views.scan_views import ScanResumeView
+        source_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, source_dir, True)
+        scan = self._make_scan(source_path=source_dir)
+        Finding.objects.create(
+            scan_id=scan.id, fingerprint="already-persisted-fp",
+            created_at=datetime.now(timezone.utc),
+        )
+        request = self._resume_request(scan.id)
+        with mock.patch("local.api_app.views.scan_views._run_lsast_pipeline") as mock_pipeline:
+            response = ScanResumeView.post.__wrapped__(ScanResumeView(), request, scan_id=scan.id)
+            self.assertEqual(response.status_code, 202)
+            _join_scan_thread()
+        mock_pipeline.assert_called_once()
+        _, kwargs = mock_pipeline.call_args
+        self.assertIn("already-persisted-fp", kwargs["skip_fingerprints"])
 
     def test_conflicts_with_an_already_running_scan(self):
         from local.api_app.views import scan_views

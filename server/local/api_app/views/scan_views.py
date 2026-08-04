@@ -360,16 +360,11 @@ class ScanResumeView(APIView):
     LLM verify/enrich step.
     """
 
-    @require_permission("create_scan")
+    @require_permission("update_scan")
     def post(self, request, scan_id):
         scan = ScanModel.find_by_id(scan_id=scan_id)
         if not scan:
             return JsonResponse({"error": "Scan not found"}, status=status.HTTP_404_NOT_FOUND)
-        if scan["status"] not in ("interrupted", "cancelled"):
-            return JsonResponse(
-                {"detail": f"Scan is {scan['status']}, not resumable."},
-                status=status.HTTP_409_CONFLICT,
-            )
 
         source_path = Scan.objects.filter(id=scan_id).values_list("source_path", flat=True).first()
         if not source_path or not os.path.isdir(source_path):
@@ -379,6 +374,13 @@ class ScanResumeView(APIView):
                 status=status.HTTP_410_GONE,
             )
 
+        # Computed before the lock/state-flip below: it doesn't depend on
+        # anything inside that section, and keeping a fallible DB call out
+        # from between "state flipped to in_progress" and "thread started"
+        # means a raise here can't strand the row in in_progress forever with
+        # a dangling _cancel_events entry -- there's nothing to roll back yet.
+        skip = already_done_fingerprints(scan_id)
+
         global scan_thread
         with scan_thread_lock:
             if scan_thread and scan_thread.is_alive():
@@ -386,15 +388,23 @@ class ScanResumeView(APIView):
                     {"detail": "Another scan already in progress."},
                     status=status.HTTP_409_CONFLICT,
                 )
-            # This IS the resume action (as opposed to a cancel), so the flag
-            # is cleared before the fresh event/thread are created -- the
-            # pipeline's own DB-sync-at-start check (see
-            # RunLsastPipelineCancelSyncTests) will then correctly find
-            # cancel_requested=False and leave the fresh event unset.
-            Scan.objects.filter(id=scan_id).update(cancel_requested=False, status="in_progress")
+            # Status check + cancel_requested clear + status flip folded into
+            # one conditional UPDATE (not a separate read-then-write), same
+            # pattern as ScanCancelView -- if the row was deleted or moved to
+            # a non-resumable status in the gap since the read above, this
+            # no-ops and `updated` is 0, so we bail out instead of starting a
+            # pipeline thread against a row that's no longer resumable (which
+            # would otherwise insert orphaned Finding rows).
+            updated = Scan.objects.filter(
+                id=scan_id, status__in=("interrupted", "cancelled"),
+            ).update(cancel_requested=False, status="in_progress")
+            if not updated:
+                return JsonResponse(
+                    {"detail": f"Scan is {scan['status']}, not resumable."},
+                    status=status.HTTP_409_CONFLICT,
+                )
             cancel_event = threading.Event()
             _cancel_events[scan_id] = cancel_event
-            skip = already_done_fingerprints(scan_id)
             scan_thread = threading.Thread(
                 target=_run_lsast_pipeline,
                 args=(scan_id, source_path, scan["triggered_by"], scan["scan_name"]),
@@ -403,6 +413,7 @@ class ScanResumeView(APIView):
             )
             scan_thread.start()
 
+        scan["status"] = "in_progress"
         return JsonResponse({"detail": "Scan resumed.", "scan": scan}, status=status.HTTP_202_ACCEPTED)
 
 
