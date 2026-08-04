@@ -165,7 +165,13 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str,
                     logger.warning("LSAST: incremental persist failed: %s", exc)
         # Runs for every attempted finding (errored/suppressed/visible alike) so
         # the progress bar reflects real work done, not just visible findings.
-        update_progress(scan_id, scanned=processed, total=total, findings=len(visible))
+        # This now runs once per finding (was once per scan pre-refactor), so a
+        # transient failure here (e.g. a SQLite write-lock from a concurrent
+        # cancel-view write) must not be allowed to kill the whole scan.
+        try:
+            update_progress(scan_id, scanned=processed, total=total, findings=len(visible))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("LSAST: progress update failed: %s", exc)
 
     # The per-finding LLM work (verify + enrich) is the wall-time bottleneck.
     # Run it concurrently across findings with a small, bounded worker pool —
@@ -183,6 +189,10 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str,
     if workers > 1 and len(sem_findings) > 1:
         ex = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="lsast")
         try:
+            # ex.map() yields in submission order, not completion order -- a
+            # slow finding can delay faster ones behind it in the list from
+            # persisting, bounded by `workers` items. Still far better than
+            # the old batch-everything-then-persist behavior.
             for outcome in ex.map(
                     lambda sf: _process_one(sf, scan_id, triggered_by, llm_ok), sem_findings):
                 _persist(outcome)

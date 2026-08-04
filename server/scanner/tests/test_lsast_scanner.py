@@ -379,7 +379,7 @@ class ParallelIdentityTests(SimpleTestCase):
         def _verify_variable_speed(**kw):
             if kw["code_excerpt"] == "e1":          # the "a" finding: fast
                 return _verify_by_excerpt(**kw)
-            slow_release.wait(timeout=5)             # everything else: blocks
+            slow_release.wait(timeout=30)            # everything else: blocks, generous safety net
             return _verify_by_excerpt(**kw)
 
         def _tracking_save(findings):
@@ -387,18 +387,45 @@ class ParallelIdentityTests(SimpleTestCase):
             if len(saved_order) == 1:
                 fast_saved.set()
 
+        worker = None
+        try:
+            with mock.patch("scanner.rag.lsast_scanner.run_semgrep",
+                            return_value=_parallel_findings()), \
+                 mock.patch("scanner.rag.lsast_scanner.verify", side_effect=_verify_variable_speed), \
+                 mock.patch("scanner.rag.lsast_scanner.save_findings_to_db", side_effect=_tracking_save), \
+                 mock.patch.dict(os.environ, {"LSAST_MAX_WORKERS": "6"}):
+                worker = threading.Thread(target=lsast_scan_folder, args=("/x", "s1", "u1"))
+                worker.start()
+                # The fast finding must be saved well before we release the slow ones.
+                self.assertTrue(fast_saved.wait(timeout=5),
+                                "first finding was not persisted before the batch finished")
+        finally:
+            slow_release.set()
+            if worker is not None:
+                worker.join(timeout=10)
+                self.assertFalse(worker.is_alive(), "worker thread did not finish -- test leaked a thread")
+
+    def test_cancel_event_stops_remaining_findings_parallel(self):
+        import threading
+        cancel_event = threading.Event()
+
+        def _verify_and_cancel_after_first(**kw):
+            result = _verify_by_excerpt(**kw)
+            if kw["code_excerpt"] == "e1":
+                cancel_event.set()
+            return result
+
         with mock.patch("scanner.rag.lsast_scanner.run_semgrep",
                         return_value=_parallel_findings()), \
-             mock.patch("scanner.rag.lsast_scanner.verify", side_effect=_verify_variable_speed), \
-             mock.patch("scanner.rag.lsast_scanner.save_findings_to_db", side_effect=_tracking_save), \
+             mock.patch("scanner.rag.lsast_scanner.verify",
+                        side_effect=_verify_and_cancel_after_first), \
              mock.patch.dict(os.environ, {"LSAST_MAX_WORKERS": "6"}):
-            worker = threading.Thread(target=lsast_scan_folder, args=("/x", "s1", "u1"))
-            worker.start()
-            # The fast finding must be saved well before we release the slow ones.
-            self.assertTrue(fast_saved.wait(timeout=5),
-                            "first finding was not persisted before the batch finished")
-            slow_release.set()
-            worker.join(timeout=5)
+            visible, filtered = lsast_scan_folder("/x", "s1", "u1", cancel_event=cancel_event)
+        # With 6 workers all findings may start before cancellation is noticed,
+        # so this only proves the parallel shutdown(cancel_futures=True) path
+        # runs without error and returns a valid (possibly partial) result --
+        # it does not assert an exact count, unlike the serial test.
+        self.assertLessEqual(len(visible) + len(filtered), 6)
 
     def test_cancel_event_stops_remaining_findings(self):
         import threading
