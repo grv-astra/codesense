@@ -429,3 +429,84 @@ class RunLsastPipelineCancelSyncTests(TestCase):
 
         self.assertTrue(event.is_set())
         self.assertTrue(observed_event_state.get("was_set"))
+
+
+class ScanResumeViewTests(TransactionTestCase):
+    """TransactionTestCase, not TestCase -- test_starts_the_pipeline_and_
+    clears_cancel_requested spawns a real background pipeline thread with its
+    own DB connection; per BackgroundPipelineSourceRetentionTests above, a
+    plain TestCase's wrapping transaction on the main connection lock-contends
+    with that thread's separate connection against the same sqlite file."""
+    def _make_scan(self, status="interrupted", source_path=None, cancel_requested=False):
+        from datetime import datetime, timezone
+        return Scan.objects.create(
+            project_id="p1", scan_name="resume-me", status=status,
+            created_at=datetime.now(timezone.utc), deleted=False,
+            source_path=source_path or "", cancel_requested=cancel_requested,
+        )
+
+    def _resume_request(self, scan_id):
+        factory = APIRequestFactory()
+        django_request = factory.post(f"/api/scans/{scan_id}/resume/")
+        request = Request(django_request, parsers=[JSONParser()])
+        request.user = {"id": "tester"}
+        return request
+
+    def test_404_for_unknown_scan(self):
+        from local.api_app.views.scan_views import ScanResumeView
+        request = self._resume_request("no-such-id")
+        response = ScanResumeView.post.__wrapped__(ScanResumeView(), request, scan_id="no-such-id")
+        self.assertEqual(response.status_code, 404)
+
+    def test_409_for_a_non_resumable_status(self):
+        from local.api_app.views.scan_views import ScanResumeView
+        scan = self._make_scan(status="completed", source_path="/tmp/whatever")
+        request = self._resume_request(scan.id)
+        response = ScanResumeView.post.__wrapped__(ScanResumeView(), request, scan_id=scan.id)
+        self.assertEqual(response.status_code, 409)
+
+    def test_410_when_source_path_missing_on_disk(self):
+        from local.api_app.views.scan_views import ScanResumeView
+        scan = self._make_scan(source_path="/tmp/does-not-exist-at-all-xyz")
+        request = self._resume_request(scan.id)
+        response = ScanResumeView.post.__wrapped__(ScanResumeView(), request, scan_id=scan.id)
+        self.assertEqual(response.status_code, 410)
+        scan.refresh_from_db()
+        self.assertEqual(scan.status, "failed")
+
+    def test_starts_the_pipeline_and_clears_cancel_requested(self):
+        import tempfile
+        from local.api_app.views.scan_views import ScanResumeView
+        source_dir = tempfile.mkdtemp()
+        scan = self._make_scan(source_path=source_dir, cancel_requested=True)
+        request = self._resume_request(scan.id)
+        # The view starts a real background thread for the pipeline; it must
+        # finish invoking the mocked scan_folder *before* the patch is torn
+        # down (join inside the `with`), or it races the `with` exit and ends
+        # up calling the real implementation instead -- see
+        # BackgroundPipelineSourceRetentionTests above, which hits the same
+        # hazard. Joining also releases the thread's DB connection before
+        # teardown, avoiding a locked sqlite test DB file on Windows.
+        with mock.patch("local.api_app.views.scan_views.scan_folder", return_value=[]):
+            response = ScanResumeView.post.__wrapped__(ScanResumeView(), request, scan_id=scan.id)
+            self.assertEqual(response.status_code, 202)
+            _join_scan_thread()
+        scan.refresh_from_db()
+        self.assertFalse(scan.cancel_requested)
+
+    def test_conflicts_with_an_already_running_scan(self):
+        from local.api_app.views import scan_views
+        from local.api_app.views.scan_views import ScanResumeView
+        scan = self._make_scan(source_path="/tmp/whatever-exists-or-not")
+        stop_event = threading.Event()
+        t = threading.Thread(target=stop_event.wait, daemon=True)
+        t.start()
+        scan_views.scan_thread = t
+        def _cleanup():
+            stop_event.set(); t.join(timeout=1); scan_views.scan_thread = None
+        self.addCleanup(_cleanup)
+        os.makedirs(scan.source_path, exist_ok=True)
+        self.addCleanup(lambda: __import__("shutil").rmtree(scan.source_path, ignore_errors=True))
+        request = self._resume_request(scan.id)
+        response = ScanResumeView.post.__wrapped__(ScanResumeView(), request, scan_id=scan.id)
+        self.assertEqual(response.status_code, 409)
