@@ -61,10 +61,13 @@ def scan_folder(folder_path, scan_id, triggered_by, scan_name,
     # STEP 3 — SCAN COMPLETE (or cancelled mid-way)
     # ----------------------------------------------------------
     if cancel_event is not None and cancel_event.is_set():
+        # No `scanned=` here: the LSAST loop's per-finding update_progress calls
+        # already wrote the accurate incremental count as files completed before
+        # the stop. Overwriting it with total_files would claim a full scan
+        # happened, contradicting status="cancelled".
         update_progress(
             scan_id=scan_id,
             findings=len(visible),
-            scanned=total_files,
             status="cancelled",
             end_time=datetime.now(timezone.utc),
         )

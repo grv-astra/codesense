@@ -99,6 +99,12 @@ class ScanFolderTests(SimpleTestCase):
                         if c.kwargs.get("status")]
         self.assertIn("cancelled", status_calls)
         self.assertNotIn("completed", status_calls)
+        # Regression guard: the cancelled-status call must NOT overwrite the
+        # incrementally-tracked `scanned` value with total_files -- that would
+        # claim a full scan happened despite status="cancelled".
+        cancelled_call = next(c for c in mock_progress.call_args_list
+                               if c.kwargs.get("status") == "cancelled")
+        self.assertNotIn("scanned", cancelled_call.kwargs)
 
     @mock.patch("licenses.services.trial.record_completion")
     @mock.patch.object(scanner_module, "lsast_scan_folder")
