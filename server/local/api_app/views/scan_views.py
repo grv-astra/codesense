@@ -365,6 +365,20 @@ class ScanResumeView(APIView):
         scan = ScanModel.find_by_id(scan_id=scan_id)
         if not scan:
             return JsonResponse({"error": "Scan not found"}, status=status.HTTP_404_NOT_FOUND)
+        # Cheap early gate: an obviously-non-resumable scan (e.g. already
+        # "completed") must bail out here, before the destructive 410 branch
+        # below gets a chance to run -- that branch calls update_status(...,
+        # "failed") unconditionally once it's reached, so letting a
+        # non-resumable scan fall through to it would corrupt an already-
+        # terminal scan's status just because its retained source happens to
+        # be gone. This is a defense-in-depth check, not the authoritative
+        # one -- the atomic conditional UPDATE further down is what actually
+        # guards against a status change racing in after this read (TOCTOU).
+        if scan["status"] not in ("interrupted", "cancelled"):
+            return JsonResponse(
+                {"detail": f"Scan is {scan['status']}, not resumable."},
+                status=status.HTTP_409_CONFLICT,
+            )
 
         source_path = Scan.objects.filter(id=scan_id).values_list("source_path", flat=True).first()
         if not source_path or not os.path.isdir(source_path):

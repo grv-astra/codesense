@@ -459,18 +459,26 @@ class ScanResumeViewTests(TransactionTestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_409_for_a_non_resumable_status(self):
-        # The source_path/os.path.isdir check runs before the atomic status
-        # update, so source_path must point at a real directory here -- else
-        # this would trip the 410 path instead of exercising the 409 the
-        # test is actually about.
-        import tempfile
         from local.api_app.views.scan_views import ScanResumeView
-        source_dir = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, source_dir, True)
-        scan = self._make_scan(status="completed", source_path=source_dir)
+        scan = self._make_scan(status="completed", source_path="/tmp/whatever")
         request = self._resume_request(scan.id)
         response = ScanResumeView.post.__wrapped__(ScanResumeView(), request, scan_id=scan.id)
         self.assertEqual(response.status_code, 409)
+
+    def test_409_for_a_non_resumable_status_even_when_source_path_is_also_missing(self):
+        """Regression: the early status gate must run BEFORE the destructive
+        410 branch (which unconditionally marks the scan 'failed'). A
+        'completed' scan with a genuinely-missing source_path (very plausible
+        for anything predating source retention) must still be rejected as a
+        harmless 409 -- not corrupted into 'failed' by a 410 that never
+        should have been reached for an already-terminal scan."""
+        from local.api_app.views.scan_views import ScanResumeView
+        scan = self._make_scan(status="completed", source_path="/tmp/does-not-exist-at-all-xyz")
+        request = self._resume_request(scan.id)
+        response = ScanResumeView.post.__wrapped__(ScanResumeView(), request, scan_id=scan.id)
+        self.assertEqual(response.status_code, 409)
+        scan.refresh_from_db()
+        self.assertEqual(scan.status, "completed")
 
     def test_410_when_source_path_missing_on_disk(self):
         from local.api_app.views.scan_views import ScanResumeView
