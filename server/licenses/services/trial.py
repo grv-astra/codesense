@@ -48,9 +48,11 @@ def used() -> int:
 
 
 def in_progress() -> int:
-    """Currently running/queued scans of either type — counted against the cap
-    so a submission still in flight (code, SBOM, or GitHub -- all gated to one
-    scan at a time app-wide) can't be double-counted by a concurrent request."""
+    """Scans still holding a slot: currently running/queued, or interrupted
+    (crashed, pending resume) -- of either type. Counted against the cap so a
+    submission still in flight (code, SBOM, or GitHub -- all gated to one scan
+    at a time app-wide) can't be double-counted by a concurrent request, and
+    an interrupted scan can't be resumed past the limit either."""
     return (
         Scan.objects.filter(status__in=_ACTIVE_STATUSES).count()
         + SbomScan.objects.filter(status__in=_ACTIVE_STATUSES).count()
