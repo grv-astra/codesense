@@ -202,6 +202,16 @@ class ProcessOneTests(SimpleTestCase):
         mock_verify.assert_not_called()
         mock_gen.assert_not_called()
 
+    @mock.patch("scanner.rag.lsast_scanner.generate_report", return_value=None)
+    @mock.patch("scanner.rag.lsast_scanner.verify",
+                return_value=VerifierVerdict("TP", "unsanitized concat", 0.9))
+    def test_outcome_carries_a_fingerprint(self, _v, _g):
+        from scanner.rag.lsast_scanner import _process_one
+        from scanner.rag.resume import fingerprint
+        sf = _sqli_finding()
+        outcome = _process_one(sf, "s1", "u1")
+        self.assertEqual(outcome.finding["fingerprint"], fingerprint(sf))
+
 
 # --- W6.2: bounded-concurrency identity --------------------------------------
 # Six findings chosen to hit ALL four fuse branches, so the parallel/serial

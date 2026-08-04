@@ -20,6 +20,7 @@ from scanner.rag.llm_verifier import verify
 from scanner.rag.lsast_types import VerifierVerdict
 from scanner.rag.progress import update_progress
 from scanner.rag.report_enricher import apply_report, generate_report
+from scanner.rag.resume import fingerprint
 from scanner.rag.semgrep_detector import run_semgrep
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ def _process_one(sf, scan_id: str, triggered_by: str, llm_ok: bool = True):
     """
     try:
         finding_dict, dataflow = normalize(sf, scan_id=scan_id, triggered_by=triggered_by)
+        finding_dict["fingerprint"] = fingerprint(sf)
         if llm_ok:
             verdict = verify(
                 cwe=sf.cwe,
