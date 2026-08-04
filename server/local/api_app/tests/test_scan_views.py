@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import threading
 import zipfile
+from datetime import datetime, timezone
 from unittest import mock
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -15,7 +16,13 @@ from rest_framework.test import APIRequestFactory
 from licenses.services import trial
 from local.api_app.models.orm import Scan, SbomScan
 from local.api_app.views import scan_views
-from local.api_app.views.scan_views import GitHubRepoScanView, GrypeCreateView, ScanCreateView, SbomCreateView
+from local.api_app.views.scan_views import (
+    GitHubRepoScanView,
+    GrypeCreateView,
+    ScanCancelView,
+    ScanCreateView,
+    SbomCreateView,
+)
 
 
 def _multipart_request(url, data):
@@ -300,7 +307,6 @@ class BackgroundPipelineSourceRetentionTests(TransactionTestCase):
 
 class ScanCancelViewTests(TestCase):
     def _make_scan(self, status="in_progress"):
-        from datetime import datetime, timezone
         return Scan.objects.create(
             project_id="p1", scan_name="cancel-me", status=status,
             created_at=datetime.now(timezone.utc), deleted=False,
@@ -314,7 +320,6 @@ class ScanCancelViewTests(TestCase):
         return request
 
     def test_sets_cancel_requested_and_returns_202(self):
-        from local.api_app.views.scan_views import ScanCancelView
         scan = self._make_scan()
         request = self._cancel_request(scan.id)
         response = ScanCancelView.post.__wrapped__(ScanCancelView(), request, scan_id=scan.id)
@@ -323,8 +328,6 @@ class ScanCancelViewTests(TestCase):
         self.assertTrue(scan.cancel_requested)
 
     def test_sets_the_in_memory_event_for_the_running_scan(self):
-        from local.api_app.views import scan_views
-        from local.api_app.views.scan_views import ScanCancelView
         scan = self._make_scan()
         event = threading.Event()
         scan_views._cancel_events[scan.id] = event
@@ -334,14 +337,95 @@ class ScanCancelViewTests(TestCase):
         self.assertTrue(event.is_set())
 
     def test_404_for_unknown_scan(self):
-        from local.api_app.views.scan_views import ScanCancelView
         request = self._cancel_request("no-such-id")
         response = ScanCancelView.post.__wrapped__(ScanCancelView(), request, scan_id="no-such-id")
         self.assertEqual(response.status_code, 404)
 
     def test_409_for_already_terminal_scan(self):
-        from local.api_app.views.scan_views import ScanCancelView
         scan = self._make_scan(status="completed")
         request = self._cancel_request(scan.id)
         response = ScanCancelView.post.__wrapped__(ScanCancelView(), request, scan_id=scan.id)
         self.assertEqual(response.status_code, 409)
+
+    def test_queued_scan_with_no_live_event_still_returns_202_via_db_only(self):
+        """A 'queued' scan has no _cancel_events entry yet (registered only once
+        the background thread starts) -- cancellation must still succeed via the
+        DB flag alone, for the pipeline to pick up once it actually starts."""
+        scan = self._make_scan(status="queued")
+        self.assertNotIn(scan.id, scan_views._cancel_events)
+        request = self._cancel_request(scan.id)
+        response = ScanCancelView.post.__wrapped__(ScanCancelView(), request, scan_id=scan.id)
+        self.assertEqual(response.status_code, 202)
+        scan.refresh_from_db()
+        self.assertTrue(scan.cancel_requested)
+
+
+class ScanCancelViewAtomicityTests(TestCase):
+    """A separate read-then-write would let a scan that finishes naturally in the
+    gap between the two get incorrectly stamped cancel_requested=True and a false
+    202. The fix folds the status check into the conditional UPDATE itself."""
+
+    def _cancel_request(self, scan_id):
+        factory = APIRequestFactory()
+        django_request = factory.post(f"/api/scans/{scan_id}/cancel/")
+        request = Request(django_request, parsers=[JSONParser()])
+        request.user = {"id": "tester"}
+        return request
+
+    def test_409_when_scan_completes_between_read_and_write(self):
+        scan = Scan.objects.create(
+            project_id="p1", scan_name="finishes-in-the-gap", status="in_progress",
+            created_at=datetime.now(timezone.utc), deleted=False,
+        )
+        request = self._cancel_request(scan.id)
+
+        real_find_by_id = scan_views.ScanModel.find_by_id
+
+        def find_by_id_then_complete(scan_id):
+            result = real_find_by_id(scan_id=scan_id)
+            # Simulate the scan finishing naturally right after the read.
+            Scan.objects.filter(id=scan_id).update(status="completed")
+            return result
+
+        with mock.patch.object(
+            scan_views.ScanModel, "find_by_id", side_effect=find_by_id_then_complete
+        ):
+            response = ScanCancelView.post.__wrapped__(ScanCancelView(), request, scan_id=scan.id)
+
+        self.assertEqual(response.status_code, 409)
+        scan.refresh_from_db()
+        self.assertFalse(scan.cancel_requested)
+
+
+class RunLsastPipelineCancelSyncTests(TestCase):
+    """Covers the cancel-while-queued race: ScanCancelView can persist
+    cancel_requested=True to the DB before the pipeline's threading.Event even
+    exists (it's only created once the background thread starts). Without a
+    sync step, _run_lsast_pipeline would start with a fresh, unset Event and
+    silently ignore the already-persisted cancellation."""
+
+    def test_pre_set_cancel_requested_flag_sets_the_fresh_event_before_work_starts(self):
+        scan = Scan.objects.create(
+            project_id="p1", scan_name="cancel-while-queued", status="queued",
+            created_at=datetime.now(timezone.utc), deleted=False, cancel_requested=True,
+        )
+        source_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, source_dir, True)
+        event = threading.Event()
+
+        observed_event_state = {}
+
+        def fake_scan_folder(**kwargs):
+            # By the time scan_folder is invoked, the pipeline must already have
+            # synced the DB flag onto the event -- the real scan_folder honors
+            # cancel_event and would bail out immediately in this state.
+            observed_event_state["was_set"] = kwargs["cancel_event"].is_set()
+            return []
+
+        with mock.patch("local.api_app.views.scan_views.scan_folder", side_effect=fake_scan_folder):
+            scan_views._run_lsast_pipeline(
+                scan.id, source_dir, "tester", "cancel-while-queued", cancel_event=event,
+            )
+
+        self.assertTrue(event.is_set())
+        self.assertTrue(observed_event_state.get("was_set"))

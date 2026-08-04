@@ -51,6 +51,16 @@ def _run_lsast_pipeline(scan_id, source_path, triggered_by, scan_name,
     'interrupted' (never 'failed') -- resuming is always safe from here since
     the source is retained regardless of how this call ends.
     """
+    # A cancel request can be persisted to the DB (via ScanCancelView) before
+    # this pipeline -- and its cancel_event -- even exist, e.g. while the scan
+    # is still "queued" during upload/extraction or clone. Sync the fresh
+    # event from the durable DB flag before doing any real work, otherwise
+    # that cancellation would be silently dropped: cancel_requested=True sits
+    # in the DB, nothing re-checks it, and the scan runs to completion anyway.
+    if cancel_event is not None:
+        already_requested = Scan.objects.filter(id=scan_id, cancel_requested=True).exists()
+        if already_requested:
+            cancel_event.set()
     try:
         findings = scan_folder(
             folder_path=source_path,
@@ -308,17 +318,34 @@ class GitHubRepoScanView(APIView):
 
 
 class ScanCancelView(APIView):
-    @require_permission("delete_scan")
+    """Explicit user-initiated cancellation of a queued/running scan.
+
+    The status check and the cancel_requested write are folded into a single
+    conditional UPDATE (not a separate read-then-write) so a scan that finishes
+    naturally in the gap can't be incorrectly stamped cancelled with a false
+    202 -- see ScanCancelViewAtomicityTests.
+
+    This is still check-then-act with respect to the rest of the system: the
+    persisted cancel_requested flag is the durable source of truth that
+    ScanResumeView / startup reconciliation (Tasks 13-14) and
+    reconcile_orphaned_scans() read to decide "interrupted" vs "cancelled" --
+    the in-memory Event signal below is purely a best-effort prompt for a scan
+    running live in *this* process right now.
+    """
+
+    @require_permission("update_scan")
     def post(self, request, scan_id):
         scan = ScanModel.find_by_id(scan_id=scan_id)
         if not scan:
             return JsonResponse({"error": "Scan not found"}, status=status.HTTP_404_NOT_FOUND)
-        if scan["status"] not in ("queued", "in_progress"):
+        updated = Scan.objects.filter(
+            id=scan_id, status__in=("queued", "in_progress")
+        ).update(cancel_requested=True)
+        if not updated:
             return JsonResponse(
                 {"detail": f"Scan is {scan['status']}, nothing to cancel."},
                 status=status.HTTP_409_CONFLICT,
             )
-        Scan.objects.filter(id=scan_id).update(cancel_requested=True)
         event = _cancel_events.get(scan_id)
         if event is not None:
             event.set()
