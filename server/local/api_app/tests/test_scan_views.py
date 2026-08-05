@@ -552,3 +552,31 @@ class ScanResumeViewTests(TransactionTestCase):
         request = self._resume_request(scan.id)
         response = ScanResumeView.post.__wrapped__(ScanResumeView(), request, scan_id=scan.id)
         self.assertEqual(response.status_code, 409)
+
+    @mock.patch.dict(os.environ, {"TRIAL_MODE": "true", "TRIAL_SCAN_LIMIT": "1"})
+    def test_resuming_a_cancelled_scan_is_blocked_by_the_trial_cap(self):
+        from local.api_app.views.scan_views import ScanResumeView
+        from licenses.services import trial
+        trial.record_completion()  # used=1, at the limit=1
+        scan = self._make_scan(status="cancelled", source_path=tempfile.mkdtemp())
+        request = self._resume_request(scan.id)
+        response = ScanResumeView.post.__wrapped__(ScanResumeView(), request, scan_id=scan.id)
+        self.assertEqual(response.status_code, 403)
+        scan.refresh_from_db()
+        self.assertEqual(scan.status, "cancelled")
+
+    @mock.patch.dict(os.environ, {"TRIAL_MODE": "true", "TRIAL_SCAN_LIMIT": "1"})
+    def test_resuming_an_interrupted_scan_is_not_blocked_by_the_trial_cap(self):
+        """Unlike 'cancelled', an interrupted scan is already counted against
+        the cap (trial._ACTIVE_STATUSES includes 'interrupted') -- it's not
+        consuming a NEW slot by resuming, so it must not be gated here even
+        when the trial is otherwise exhausted."""
+        from local.api_app.views.scan_views import ScanResumeView
+        from licenses.services import trial
+        trial.record_completion()  # used=1, at the limit=1
+        scan = self._make_scan(status="interrupted", source_path=tempfile.mkdtemp())
+        request = self._resume_request(scan.id)
+        with mock.patch("local.api_app.views.scan_views.scan_folder", return_value=[]):
+            response = ScanResumeView.post.__wrapped__(ScanResumeView(), request, scan_id=scan.id)
+            self.assertEqual(response.status_code, 202)
+            _join_scan_thread()

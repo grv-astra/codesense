@@ -380,6 +380,20 @@ class ScanResumeView(APIView):
                 status=status.HTTP_409_CONFLICT,
             )
 
+        # Trial gate only applies when resuming a "cancelled" scan: cancelling
+        # releases its slot (trial._ACTIVE_STATUSES excludes "cancelled", same
+        # as "failed"), so resuming one is equivalent to starting new work. An
+        # "interrupted" scan never released its slot (it's still counted via
+        # trial.in_progress()), so gating it here would wrongly re-check a
+        # slot it already owns and could block it from resuming itself.
+        if scan["status"] == "cancelled" and not trial.can_start():
+            return JsonResponse(
+                {"detail": f"Trial limit reached — {trial.used()}/{trial.limit()} "
+                           f"scans used. Contact us to upgrade to the full version.",
+                 "trial": trial.status()},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         source_path = Scan.objects.filter(id=scan_id).values_list("source_path", flat=True).first()
         if not source_path or not os.path.isdir(source_path):
             ScanModel.update_status(scan_id, "failed")
