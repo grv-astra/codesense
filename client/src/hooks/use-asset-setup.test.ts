@@ -19,10 +19,12 @@ vi.mock('@tauri-apps/api/core', () => ({
     }
     return Promise.resolve();
   }),
+  isTauri: vi.fn(() => true),
 }));
 
 import { useAssetSetup } from './use-asset-setup';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, isTauri } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 describe('useAssetSetup', () => {
   beforeEach(() => {
@@ -173,5 +175,15 @@ describe('useAssetSetup', () => {
       expect(result.current.asset).toBe('unknown');
       expect(result.current.reason).toBe('backend unreachable');
     }
+  });
+
+  test('is immediately ready and never touches Tauri IPC when not running inside Tauri', () => {
+    (isTauri as ReturnType<typeof vi.fn>).mockReturnValueOnce(false);
+
+    const { result } = renderHook(() => useAssetSetup());
+
+    expect(result.current.status).toBe('ready');
+    expect(invoke).not.toHaveBeenCalled();
+    expect(listen).not.toHaveBeenCalled();
   });
 });
