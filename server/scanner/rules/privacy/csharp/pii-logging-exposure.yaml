@@ -20,8 +20,17 @@ rules:
     - pattern-either:
         - pattern: Console.WriteLine($ARG)
         - pattern: Debug.WriteLine($ARG)
-        - pattern: $LOGGER.$METHOD($ARG)
-        - pattern: $LOGGER.$METHOD($MSG, $ARG)
+        # $LOGGER is unconstrained -- without the $METHOD whitelist below this
+        # branch matches ANY single/double-arg method call, not just real
+        # logger calls (ILogger's LogInformation/LogWarning/etc., NLog/Serilog
+        # Info/Warn/Error/...). Scope it to method names that mean "log this".
+        - patterns:
+            - pattern-either:
+                - pattern: $LOGGER.$METHOD($ARG)
+                - pattern: $LOGGER.$METHOD($MSG, $ARG)
+            - metavariable-regex:
+                metavariable: $METHOD
+                regex: (?i)^(log[a-z]*|debug|info|warn|warning|error|err|exception|critical|fatal|trace|notice|alert|emergency|write|writeline|println|printf)$
     - metavariable-regex:
         metavariable: $ARG
         regex: (?is).*(ssn|social_security|socialsecurity|email|credit_?card|cardnumber|card_number|cvv|passport|national_?id|driver_?licen[cs]e|date_?of_?birth|\bdob\b|phone_?number|home_?address|street_?address|mailing_?address|bank_?account|routing_?number|iban|tax_?id|medical_?record|health_?record|patient_?id).*

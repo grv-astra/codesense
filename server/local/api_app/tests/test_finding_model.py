@@ -79,3 +79,12 @@ class FindingModelTests(TestCase):
         FindingModel.insert_many([self._finding(scan_id=s["id"])])
         rows = FindingModel.find_by_project("projX")
         self.assertEqual(len(rows), 1)
+
+    def test_insert_many_persists_fingerprint(self):
+        from datetime import datetime, timezone
+        saved = FindingModel.insert_many([{
+            "scan_id": "s1", "title": "t", "cwe": "CWE-89", "severity": "high",
+            "status": "open", "created_at": datetime.now(timezone.utc),
+            "fingerprint": "abc123",
+        }])
+        self.assertEqual(saved[0]["fingerprint"], "abc123")

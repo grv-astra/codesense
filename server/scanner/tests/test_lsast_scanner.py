@@ -5,6 +5,7 @@ from django.test import SimpleTestCase
 
 from scanner.rag.lsast_scanner import lsast_scan_folder
 from scanner.rag.lsast_types import FindingReport, SemgrepFinding, VerifierVerdict
+from scanner.rag.resume import fingerprint
 
 
 def _sqli_finding() -> SemgrepFinding:
@@ -144,6 +145,41 @@ class LsastScanFolderTests(SimpleTestCase):
         mock_verify.assert_not_called()          # AI verify skipped when LLM is down
         mock_save.assert_called_once()           # still persisted (incrementally)
 
+    @mock.patch("scanner.rag.lsast_scanner.save_findings_to_db")
+    @mock.patch("scanner.rag.lsast_scanner.verify")
+    @mock.patch("scanner.rag.lsast_scanner.run_semgrep")
+    def test_skip_fingerprints_excludes_already_done_findings(self, mock_run, mock_verify, mock_save):
+        from scanner.rag.resume import fingerprint
+        done = _sqli_finding()      # pretend this one was already processed
+        pending = _safe_orm_finding()
+        mock_run.return_value = [done, pending]
+        mock_verify.return_value = VerifierVerdict("TP", "x", 0.8)
+
+        visible, filtered = lsast_scan_folder(
+            "/tmp/code", "s1", "user-1",
+            skip_fingerprints=frozenset({fingerprint(done)}),
+        )
+        # Only the pending finding should have gone through verify/persist.
+        mock_verify.assert_called_once()
+        self.assertEqual(len(visible), 1)
+        self.assertEqual(visible[0]["fingerprint"], fingerprint(pending))
+
+    @mock.patch("scanner.rag.lsast_scanner.save_findings_to_db")
+    @mock.patch("scanner.rag.lsast_scanner.verify")
+    @mock.patch("scanner.rag.lsast_scanner.run_semgrep")
+    def test_skip_fingerprints_matching_everything_short_circuits(self, mock_run, mock_verify, mock_save):
+        from scanner.rag.resume import fingerprint
+        done = _sqli_finding()
+        mock_run.return_value = [done]
+
+        visible, filtered = lsast_scan_folder(
+            "/tmp/code", "s1", "user-1",
+            skip_fingerprints=frozenset({fingerprint(done)}),
+        )
+        self.assertEqual((visible, filtered), ([], []))
+        mock_verify.assert_not_called()
+        mock_save.assert_not_called()
+
 
 class LanguageRoutingTests(SimpleTestCase):
     def setUp(self):
@@ -201,6 +237,16 @@ class ProcessOneTests(SimpleTestCase):
         self.assertEqual(outcome.action, "show")     # fail-open TP preserved
         mock_verify.assert_not_called()
         mock_gen.assert_not_called()
+        self.assertEqual(outcome.finding["fingerprint"], fingerprint(_sqli_finding()))
+
+    @mock.patch("scanner.rag.lsast_scanner.generate_report", return_value=None)
+    @mock.patch("scanner.rag.lsast_scanner.verify",
+                return_value=VerifierVerdict("TP", "unsanitized concat", 0.9))
+    def test_outcome_carries_a_fingerprint(self, _v, _g):
+        from scanner.rag.lsast_scanner import _process_one
+        sf = _sqli_finding()
+        outcome = _process_one(sf, "s1", "u1")
+        self.assertEqual(outcome.finding["fingerprint"], fingerprint(sf))
 
 
 # --- W6.2: bounded-concurrency identity --------------------------------------
@@ -319,3 +365,86 @@ class ParallelIdentityTests(SimpleTestCase):
              mock.patch.dict(os.environ, {"LSAST_MAX_WORKERS": "3"}):
             visible, filtered = lsast_scan_folder("/x", "s1", "u1")
         self.assertEqual(len(visible) + len(filtered), 6)
+
+    def test_finding_persists_before_the_whole_batch_finishes(self):
+        """Proves progressive persistence: a fast finding's save() call must
+        happen while a slower finding (still running in another worker) hasn't
+        returned yet. This fails on the old `list(ex.map(...))` code, which
+        blocks persistence until every finding is done."""
+        import threading
+        slow_release = threading.Event()
+        fast_saved = threading.Event()
+        saved_order = []
+
+        def _verify_variable_speed(**kw):
+            if kw["code_excerpt"] == "e1":          # the "a" finding: fast
+                return _verify_by_excerpt(**kw)
+            slow_release.wait(timeout=30)            # everything else: blocks, generous safety net
+            return _verify_by_excerpt(**kw)
+
+        def _tracking_save(findings):
+            saved_order.append(findings[0]["title"] if findings else None)
+            if len(saved_order) == 1:
+                fast_saved.set()
+
+        worker = None
+        try:
+            with mock.patch("scanner.rag.lsast_scanner.run_semgrep",
+                            return_value=_parallel_findings()), \
+                 mock.patch("scanner.rag.lsast_scanner.verify", side_effect=_verify_variable_speed), \
+                 mock.patch("scanner.rag.lsast_scanner.save_findings_to_db", side_effect=_tracking_save), \
+                 mock.patch.dict(os.environ, {"LSAST_MAX_WORKERS": "6"}):
+                worker = threading.Thread(target=lsast_scan_folder, args=("/x", "s1", "u1"))
+                worker.start()
+                # The fast finding must be saved well before we release the slow ones.
+                self.assertTrue(fast_saved.wait(timeout=5),
+                                "first finding was not persisted before the batch finished")
+        finally:
+            slow_release.set()
+            if worker is not None:
+                worker.join(timeout=10)
+                self.assertFalse(worker.is_alive(), "worker thread did not finish -- test leaked a thread")
+
+    def test_cancel_event_stops_remaining_findings_parallel(self):
+        import threading
+        cancel_event = threading.Event()
+
+        def _verify_and_cancel_after_first(**kw):
+            result = _verify_by_excerpt(**kw)
+            if kw["code_excerpt"] == "e1":
+                cancel_event.set()
+            return result
+
+        with mock.patch("scanner.rag.lsast_scanner.run_semgrep",
+                        return_value=_parallel_findings()), \
+             mock.patch("scanner.rag.lsast_scanner.verify",
+                        side_effect=_verify_and_cancel_after_first), \
+             mock.patch.dict(os.environ, {"LSAST_MAX_WORKERS": "6"}):
+            visible, filtered = lsast_scan_folder("/x", "s1", "u1", cancel_event=cancel_event)
+        # With 6 workers all findings may start before cancellation is noticed,
+        # so this only proves the parallel shutdown(cancel_futures=True) path
+        # runs without error and returns a valid (possibly partial) result --
+        # it does not assert an exact count, unlike the serial test.
+        self.assertLessEqual(len(visible) + len(filtered), 6)
+
+    def test_cancel_event_stops_remaining_findings(self):
+        import threading
+        cancel_event = threading.Event()
+        started = threading.Event()
+
+        def _verify_and_cancel_after_first(**kw):
+            result = _verify_by_excerpt(**kw)
+            if kw["code_excerpt"] == "e1":
+                cancel_event.set()
+            started.set()
+            return result
+
+        with mock.patch("scanner.rag.lsast_scanner.run_semgrep",
+                        return_value=_parallel_findings()), \
+             mock.patch("scanner.rag.lsast_scanner.verify",
+                        side_effect=_verify_and_cancel_after_first), \
+             mock.patch.dict(os.environ, {"LSAST_MAX_WORKERS": "1"}):  # serial: deterministic order
+            visible, filtered = lsast_scan_folder("/x", "s1", "u1", cancel_event=cancel_event)
+        # Serial path processes "a" (e1) first, sets cancel_event, then stops
+        # before processing b..f.
+        self.assertEqual(len(visible) + len(filtered), 1)

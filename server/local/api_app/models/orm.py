@@ -38,6 +38,8 @@ class Scan(UUIDModel):
     error = models.TextField(blank=True, default="")
     deleted = models.BooleanField(default=False)
     metrics = models.JSONField(default=_scan_metrics_default)
+    source_path = models.CharField(max_length=1024, blank=True, default="")
+    cancel_requested = models.BooleanField(default=False)
 
     class Meta:
         app_label = "api_app"
@@ -76,6 +78,11 @@ class Finding(UUIDModel):
     # window, not just the exact match) — lets the UI number lines correctly.
     # Nullable for back-compat with pre-existing rows.
     code_snip_start_line = models.IntegerField(null=True, blank=True)
+    # Stable identity for the raw detector match this Finding came from
+    # (sha256 of file_path+start_line+rule_id) -- lets a resumed scan tell
+    # which findings were already verified+persisted in a prior attempt and
+    # skip re-running the LLM step for them. Blank for pre-existing rows.
+    fingerprint = models.CharField(max_length=64, blank=True, default="", db_index=True)
 
     class Meta:
         app_label = "api_app"

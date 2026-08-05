@@ -26,6 +26,12 @@ def main():
 
     from django.core.management import call_command
     call_command("migrate", interactive=False, verbosity=0)
+
+    from scanner.rag.resume import reconcile_orphaned_scans
+    reconciled = reconcile_orphaned_scans()
+    if reconciled:
+        print(f"Reconciled {reconciled} orphaned scan(s) from a previous run", flush=True)
+
     # Gather admin/DRF assets so they render with DEBUG off (no-op if already present).
     call_command("collectstatic", interactive=False, verbosity=0)
 

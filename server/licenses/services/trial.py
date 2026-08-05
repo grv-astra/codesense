@@ -11,16 +11,17 @@ separate feature toggle.
 
 Counting policy: a slot is consumed only on SUCCESSFUL completion
 (``record_completion`` is called from each pipeline's completion step, which
-failed scans never reach). In-progress/queued scans of EITHER type are counted
-against the limit at creation time so concurrent submissions (code + SBOM, or
-several of either) can't overshoot the cap.
+failed scans never reach). In-progress/queued/interrupted scans of EITHER type
+are counted against the limit at creation time (and while pending resume) so
+concurrent submissions can't overshoot the cap. A user-cancelled scan does
+NOT count -- same as a failed one, no slot was ever completed.
 """
 import os
 from datetime import datetime, timezone
 
 from local.api_app.models.orm import Scan, SbomScan, TrialUsage
 
-_ACTIVE_STATUSES = ("queued", "in_progress")
+_ACTIVE_STATUSES = ("queued", "in_progress", "interrupted")
 _DEFAULT_LIMIT = 2
 
 
@@ -47,9 +48,11 @@ def used() -> int:
 
 
 def in_progress() -> int:
-    """Currently running/queued scans of either type — counted against the cap
-    so several concurrent submissions (the GitHub path allows >1, and code +
-    SBOM scans now share one limit) can't blow past it."""
+    """Scans still holding a slot: currently running/queued, or interrupted
+    (crashed, pending resume) -- of either type. Counted against the cap so a
+    submission still in flight (code, SBOM, or GitHub -- all gated to one scan
+    at a time app-wide) can't be double-counted by a concurrent request, and
+    an interrupted scan can't be resumed past the limit either."""
     return (
         Scan.objects.filter(status__in=_ACTIVE_STATUSES).count()
         + SbomScan.objects.filter(status__in=_ACTIVE_STATUSES).count()

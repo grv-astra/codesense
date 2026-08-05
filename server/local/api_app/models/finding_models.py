@@ -7,6 +7,7 @@ _FIELDS = [
     "description", "severity", "file_path", "code_snip", "security_risk",
     "mitigation", "status", "deleted", "approved", "reference", "created_at",
     "rule_id", "confidence", "verifier_reason", "flow_diagram", "code_snip_start_line",
+    "fingerprint",
 ]
 
 
@@ -44,6 +45,7 @@ class FindingModel:
             "verifier_reason": finding.verifier_reason or "",
             "flow_diagram": finding.flow_diagram or [],
             "code_snip_start_line": finding.code_snip_start_line,   # int | None (None on pre-existing rows)
+            "fingerprint": finding.fingerprint or "",
         }
 
     @classmethod

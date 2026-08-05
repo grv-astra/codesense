@@ -10,10 +10,11 @@ from django.utils.decorators import method_decorator
 from rest_framework.views import APIView
 from rest_framework import status
 from scanner.rag.scanner import scan_folder
+from scanner.rag.resume import already_done_fingerprints
 import logging
 import shutil
 import threading
- 
+
 from local.auth_app.permissions.decorators import require_permission
 from licenses.services.auth import require_assertion_jwt
 from licenses.services import trial
@@ -24,19 +25,71 @@ from scanner.rag.llm import get_llm
 from scanner.rag.progress import update_progress
 from datetime import datetime, timezone
 from local.api_app.models.sbom_models import SbomModel
+from local.api_app.models.orm import Scan
 from local.api_app.serializers.scan_serializers import ScanStartSerializer, ScanWithSbomSerializer
- 
+
 scan_thread = None
 scan_thread_lock = threading.Lock()
-# Global scan controls
-scan_lock = threading.Lock()
-active_scans = {}
-MAX_CONCURRENT_SCANS = 5
- 
- 
+# Cooperative-cancel signals for the scan currently running, keyed by scan_id.
+# Only ever has at most one live entry given the one-scan-at-a-time invariant
+# above, but keyed defensively rather than assuming that never changes.
+_cancel_events: dict[str, threading.Event] = {}
+
+
 MEDIA_ROOT = os.path.join(settings.BASE_DIR, "media", "scans")
 os.makedirs(MEDIA_ROOT, exist_ok=True)
- 
+
+
+def _run_lsast_pipeline(scan_id, source_path, triggered_by, scan_name,
+                        skip_fingerprints=frozenset(), cancel_event=None):
+    """Runs the LSAST pipeline over an already-extracted source_path and updates
+    the Scan row accordingly. Shared by a fresh scan and a resumed one -- the
+    only difference between the two call sites is what skip_fingerprints/
+    cancel_event they pass in.
+
+    Once source_path exists, any non-'completed'/'cancelled' outcome lands in
+    'interrupted' (never 'failed') -- resuming is always safe from here since
+    the source is retained regardless of how this call ends.
+    """
+    # A cancel request can be persisted to the DB (via ScanCancelView) before
+    # this pipeline -- and its cancel_event -- even exist, e.g. while the scan
+    # is still "queued" during upload/extraction or clone. Sync the fresh
+    # event from the durable DB flag before doing any real work, otherwise
+    # that cancellation would be silently dropped: cancel_requested=True sits
+    # in the DB, nothing re-checks it, and the scan runs to completion anyway.
+    if cancel_event is not None:
+        already_requested = Scan.objects.filter(id=scan_id, cancel_requested=True).exists()
+        if already_requested:
+            cancel_event.set()
+    try:
+        findings = scan_folder(
+            folder_path=source_path,
+            scan_id=scan_id,
+            triggered_by=triggered_by,
+            scan_name=scan_name,
+            skip_fingerprints=skip_fingerprints,
+            cancel_event=cancel_event,
+        )
+        logging.info(f"Scan run finished. Found {len(findings) if findings else 0} vulnerabilities.")
+    except Exception as e:
+        logging.error(f"Error during scan: {e}")
+        ScanModel.update_status(scan_id, "interrupted")
+        update_progress(
+            scan_id=scan_id,
+            status="interrupted",
+            end_time=datetime.now(timezone.utc),
+            error=str(e),
+        )
+        import traceback
+        logging.error(traceback.format_exc())
+    finally:
+        _cancel_events.pop(scan_id, None)
+        # This thread never goes through Django's request_started/
+        # request_finished signals, so its DB connection is never
+        # auto-closed -- release it explicitly.
+        close_old_connections()
+
+
 @method_decorator(csrf_exempt, name='dispatch')
 class ScanCreateView(APIView):
     @require_permission("create_scan")
@@ -69,11 +122,18 @@ class ScanCreateView(APIView):
             scan = ScanModel.create(scan_data)
             scan_id = scan["id"]
  
-            # Create temporary directory for both ZIP file and extraction
-            temp_dir = tempfile.mkdtemp()
+            # Extracted source is retained (not a throwaway temp dir) so an
+            # interrupted/cancelled scan can be resumed without re-uploading.
+            # source_path is only recorded on the row once extraction has
+            # actually succeeded (below) -- a bad zip / pre-extraction failure
+            # has nothing to resume, so the row must not point at a directory
+            # that's about to be rmtree'd.
+            scan_dir = os.path.join(MEDIA_ROOT, str(scan_id))
+            temp_dir = os.path.join(scan_dir, "upload")
+            extracted_folder_path = os.path.join(scan_dir, "source")
+            os.makedirs(temp_dir, exist_ok=True)
             temp_zip_path = os.path.join(temp_dir, zip_file.name)
-            extracted_folder_path = os.path.join(temp_dir, 'extracted')
-   
+
             try:
                 # Save uploaded ZIP file
                 with open(temp_zip_path, 'wb+') as f:
@@ -96,61 +156,35 @@ class ScanCreateView(APIView):
             except zipfile.BadZipFile:
                 logging.error("Uploaded file is not a valid ZIP file")
                 ScanModel.update_status(scan_id, "failed")
-                shutil.rmtree(temp_dir)
+                shutil.rmtree(scan_dir, ignore_errors=True)
                 return JsonResponse({"error": "Invalid zip file"}, status=status.HTTP_400_BAD_REQUEST)
 
             except Exception as e:
                 logging.error(f"Failed to process uploaded file: {e}")
                 ScanModel.update_status(scan_id, "failed")
-                shutil.rmtree(temp_dir)
+                shutil.rmtree(scan_dir, ignore_errors=True)
                 return JsonResponse({"detail": "Failed to process uploaded file."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-           
-            # Start scan in background thread
-            def run_scan():
-                try:
-                    logging.info(f"Starting scan with scan_name={scan_name}")
-                   
-                    # Call scan_folder with extracted folder path
-                    findings = scan_folder(
-                        folder_path=extracted_folder_path,
-                        scan_id=scan_id,
-                        triggered_by=triggered_by,
-                        scan_name=scan_name,
-                    )
-                    logging.info(f"Scan completed successfully. Found {len(findings) if findings else 0} vulnerabilities.")
-                   
-                except Exception as e:
-                    logging.error(f"Error during scan: {e}")
-                    ScanModel.update_status(scan_id, "failed")
-                    update_progress(
-                        scan_id=scan_id,
-                        status="failed",
-                        end_time=datetime.now(timezone.utc),
-                        error=str(e),
-                    )
-                    import traceback
-                    logging.error(traceback.format_exc())
-                finally:
-                    # Cleanup temp files and directory
-                    try:
-                        shutil.rmtree(temp_dir)
-                        logging.info(f"Cleaned up temporary directory: {temp_dir}")
-                    except Exception as e:
-                        logging.error(f"Error cleaning up temporary files: {e}")
-                    # This thread never goes through Django's request_started/
-                    # request_finished signals, so its DB connection is never
-                    # auto-closed -- release it explicitly.
-                    close_old_connections()
 
             global scan_thread
             with scan_thread_lock:
                 if scan_thread and scan_thread.is_alive():
                     ScanModel.update_status(scan_id, "failed")
-                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    Scan.objects.filter(id=scan_id).update(source_path="")
+                    shutil.rmtree(scan_dir, ignore_errors=True)
                     return JsonResponse({"detail": "Scan already in progress."}, status=status.HTTP_409_CONFLICT)
-                scan_thread = threading.Thread(target=run_scan, daemon=True)
+                # Extraction succeeded -- record source_path now, only once
+                # it's actually durable, then hand off to the pipeline.
+                Scan.objects.filter(id=scan_id).update(source_path=extracted_folder_path)
+                cancel_event = threading.Event()
+                _cancel_events[scan_id] = cancel_event
+                scan_thread = threading.Thread(
+                    target=_run_lsast_pipeline,
+                    args=(scan_id, extracted_folder_path, triggered_by, scan_name),
+                    kwargs={"cancel_event": cancel_event},
+                    daemon=True,
+                )
                 scan_thread.start()
- 
+
             return JsonResponse({"detail": "Scan started successfully.", "scan": scan}, status=status.HTTP_202_ACCEPTED)
         else:
             return JsonResponse(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -220,16 +254,7 @@ class GitHubRepoScanView(APIView):
                 {"error": "token, username, repo, project_id are required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
- 
-        # Prevent too many concurrent scans
-        with scan_lock:
-            current_active = len([s for s in active_scans.values() if s.is_alive()])
-            if current_active >= MAX_CONCURRENT_SCANS:
-                return Response(
-                    {"detail": f"Max concurrent scans ({MAX_CONCURRENT_SCANS}) reached"},
-                    status=429
-                )
- 
+
         # DB log
         scan = ScanModel.create({
             "scan_name": scan_name,
@@ -242,26 +267,23 @@ class GitHubRepoScanView(APIView):
  
         # Background thread
         def run_github_scan():
+            # Two genuinely different failure modes: a clone failure means
+            # source_path was never set -- there is nothing to resume, so it
+            # lands in "failed" (mirrors ScanCreateView's pre-extraction
+            # handlers). Once folder_path exists, any pipeline failure is
+            # retained-and-resumable, so it's delegated to the same
+            # _run_lsast_pipeline() helper the zip path uses -- that's what
+            # lands it in "interrupted" instead.
             try:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
- 
-                # Download repo → return folder_path
+
                 result = loop.run_until_complete(
                     scan_github_repo(token, username, repo, branch)
                 )
- 
                 folder_path = result["folder_path"]
- 
-                scan_folder(
-                    folder_path=folder_path,
-                    scan_id=scan_id,
-                    triggered_by=triggered_by,
-                    scan_name=scan_name
-                )
- 
             except Exception as e:
-                logging.error(f"GitHub scan failed: {e}")
+                logging.error(f"GitHub clone failed: {e}")
                 ScanModel.update_status(scan_id, "failed")
                 update_progress(
                     scan_id=scan_id,
@@ -269,24 +291,158 @@ class GitHubRepoScanView(APIView):
                     end_time=datetime.now(timezone.utc),
                     error=str(e),
                 )
- 
-            finally:
-                with scan_lock:
-                    active_scans.pop(scan_id, None)
-                # This thread never goes through Django's request_started/
-                # request_finished signals, so its DB connection is never
-                # auto-closed -- release it explicitly.
+                _cancel_events.pop(scan_id, None)
                 close_old_connections()
+                return
 
-        t = threading.Thread(target=run_github_scan, daemon=True)
-        with scan_lock:
-            active_scans[scan_id] = t
-        t.start()
- 
+            Scan.objects.filter(id=scan_id).update(source_path=folder_path)
+            cancel_event = _cancel_events.get(scan_id)
+            _run_lsast_pipeline(scan_id, folder_path, triggered_by, scan_name, cancel_event=cancel_event)
+
+        global scan_thread
+        with scan_thread_lock:
+            if scan_thread and scan_thread.is_alive():
+                ScanModel.update_status(scan_id, "failed")
+                return Response(
+                    {"detail": "Another scan already in progress."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            _cancel_events[scan_id] = threading.Event()
+            scan_thread = threading.Thread(target=run_github_scan, daemon=True)
+            scan_thread.start()
+
         return Response(
             {"detail": "GitHub scan started", "scan": scan},
             status=202
         )
+
+
+class ScanCancelView(APIView):
+    """Explicit user-initiated cancellation of a queued/running scan.
+
+    The status check and the cancel_requested write are folded into a single
+    conditional UPDATE (not a separate read-then-write) so a scan that finishes
+    naturally in the gap can't be incorrectly stamped cancelled with a false
+    202 -- see ScanCancelViewAtomicityTests.
+
+    This is still check-then-act with respect to the rest of the system: the
+    persisted cancel_requested flag is the durable source of truth that
+    ScanResumeView / startup reconciliation (Tasks 13-14) and
+    reconcile_orphaned_scans() read to decide "interrupted" vs "cancelled" --
+    the in-memory Event signal below is purely a best-effort prompt for a scan
+    running live in *this* process right now.
+    """
+
+    @require_permission("update_scan")
+    def post(self, request, scan_id):
+        scan = ScanModel.find_by_id(scan_id=scan_id)
+        if not scan:
+            return JsonResponse({"error": "Scan not found"}, status=status.HTTP_404_NOT_FOUND)
+        updated = Scan.objects.filter(
+            id=scan_id, status__in=("queued", "in_progress")
+        ).update(cancel_requested=True)
+        if not updated:
+            return JsonResponse(
+                {"detail": f"Scan is {scan['status']}, nothing to cancel."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        event = _cancel_events.get(scan_id)
+        if event is not None:
+            event.set()
+        return JsonResponse({"detail": "Cancellation requested."}, status=status.HTTP_202_ACCEPTED)
+
+
+class ScanResumeView(APIView):
+    """Manual resume for an 'interrupted'/'cancelled' scan whose source_path is
+    still retained on disk. Re-dispatches the LSAST pipeline over that same
+    source, skipping any finding already persisted from a prior attempt (via
+    already_done_fingerprints) so only genuinely new work goes through the
+    LLM verify/enrich step.
+    """
+
+    @require_permission("update_scan")
+    def post(self, request, scan_id):
+        scan = ScanModel.find_by_id(scan_id=scan_id)
+        if not scan:
+            return JsonResponse({"error": "Scan not found"}, status=status.HTTP_404_NOT_FOUND)
+        # Cheap early gate: an obviously-non-resumable scan (e.g. already
+        # "completed") must bail out here, before the destructive 410 branch
+        # below gets a chance to run -- that branch calls update_status(...,
+        # "failed") unconditionally once it's reached, so letting a
+        # non-resumable scan fall through to it would corrupt an already-
+        # terminal scan's status just because its retained source happens to
+        # be gone. This is a defense-in-depth check, not the authoritative
+        # one -- the atomic conditional UPDATE further down is what actually
+        # guards against a status change racing in after this read (TOCTOU).
+        if scan["status"] not in ("interrupted", "cancelled"):
+            return JsonResponse(
+                {"detail": f"Scan is {scan['status']}, not resumable."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        # Trial gate only applies when resuming a "cancelled" scan: cancelling
+        # releases its slot (trial._ACTIVE_STATUSES excludes "cancelled", same
+        # as "failed"), so resuming one is equivalent to starting new work. An
+        # "interrupted" scan never released its slot (it's still counted via
+        # trial.in_progress()), so gating it here would wrongly re-check a
+        # slot it already owns and could block it from resuming itself.
+        if scan["status"] == "cancelled" and not trial.can_start():
+            return JsonResponse(
+                {"detail": f"Trial limit reached — {trial.used()}/{trial.limit()} "
+                           f"scans used. Contact us to upgrade to the full version.",
+                 "trial": trial.status()},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        source_path = Scan.objects.filter(id=scan_id).values_list("source_path", flat=True).first()
+        if not source_path or not os.path.isdir(source_path):
+            ScanModel.update_status(scan_id, "failed")
+            return JsonResponse(
+                {"detail": "Source is no longer available; please start a new scan."},
+                status=status.HTTP_410_GONE,
+            )
+
+        # Computed before the lock/state-flip below: it doesn't depend on
+        # anything inside that section, and keeping a fallible DB call out
+        # from between "state flipped to in_progress" and "thread started"
+        # means a raise here can't strand the row in in_progress forever with
+        # a dangling _cancel_events entry -- there's nothing to roll back yet.
+        skip = already_done_fingerprints(scan_id)
+
+        global scan_thread
+        with scan_thread_lock:
+            if scan_thread and scan_thread.is_alive():
+                return JsonResponse(
+                    {"detail": "Another scan already in progress."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            # Status check + cancel_requested clear + status flip folded into
+            # one conditional UPDATE (not a separate read-then-write), same
+            # pattern as ScanCancelView -- if the row was deleted or moved to
+            # a non-resumable status in the gap since the read above, this
+            # no-ops and `updated` is 0, so we bail out instead of starting a
+            # pipeline thread against a row that's no longer resumable (which
+            # would otherwise insert orphaned Finding rows).
+            updated = Scan.objects.filter(
+                id=scan_id, status__in=("interrupted", "cancelled"),
+            ).update(cancel_requested=False, status="in_progress")
+            if not updated:
+                return JsonResponse(
+                    {"detail": f"Scan is {scan['status']}, not resumable."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            cancel_event = threading.Event()
+            _cancel_events[scan_id] = cancel_event
+            scan_thread = threading.Thread(
+                target=_run_lsast_pipeline,
+                args=(scan_id, source_path, scan["triggered_by"], scan["scan_name"]),
+                kwargs={"skip_fingerprints": skip, "cancel_event": cancel_event},
+                daemon=True,
+            )
+            scan_thread.start()
+
+        scan["status"] = "in_progress"
+        return JsonResponse({"detail": "Scan resumed.", "scan": scan}, status=status.HTTP_202_ACCEPTED)
 
 
 class ModelHealthView(APIView):

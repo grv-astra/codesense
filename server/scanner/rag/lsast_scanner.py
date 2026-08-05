@@ -20,6 +20,7 @@ from scanner.rag.llm_verifier import verify
 from scanner.rag.lsast_types import VerifierVerdict
 from scanner.rag.progress import update_progress
 from scanner.rag.report_enricher import apply_report, generate_report
+from scanner.rag.resume import fingerprint
 from scanner.rag.semgrep_detector import run_semgrep
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,9 @@ def _process_one(sf, scan_id: str, triggered_by: str, llm_ok: bool = True):
     """
     try:
         finding_dict, dataflow = normalize(sf, scan_id=scan_id, triggered_by=triggered_by)
+        # Resume checkpoint identity -- set unconditionally (independent of
+        # llm_ok) so a fail-open finding is still skippable on a later resume.
+        finding_dict["fingerprint"] = fingerprint(sf)
         if llm_ok:
             verdict = verify(
                 cwe=sf.cwe,
@@ -96,9 +100,17 @@ def _process_one(sf, scan_id: str, triggered_by: str, llm_ok: bool = True):
     return outcome
 
 
-def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str
+def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str,
+                       skip_fingerprints: frozenset[str] = frozenset(),
+                       cancel_event=None,
                       ) -> tuple[list[dict], list[dict]]:
-    """Run the full LSAST pipeline. Returns (visible, filtered)."""
+    """Run the full LSAST pipeline. Returns (visible, filtered).
+
+    ``skip_fingerprints`` excludes findings already verified+persisted in a
+    prior (crashed/cancelled) attempt at this same scan -- see resume.py.
+    ``cancel_event``, when set, is checked between findings so a user-requested
+    cancel stops the batch promptly instead of running it to completion.
+    """
     sem_findings = run_semgrep(folder_path)
     if not sem_findings:
         logger.info("LSAST: Semgrep produced no findings for %s", folder_path)
@@ -110,6 +122,16 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str
     sem_findings = dedupe_findings(sem_findings)
     if len(sem_findings) != raw_count:
         logger.info("LSAST: de-duplicated %d -> %d findings", raw_count, len(sem_findings))
+
+    if skip_fingerprints:
+        before = len(sem_findings)
+        sem_findings = [sf for sf in sem_findings if fingerprint(sf) not in skip_fingerprints]
+        logger.info("LSAST: resume filtered %d -> %d findings (already processed)",
+                    before, len(sem_findings))
+        if not sem_findings:
+            logger.info("LSAST: nothing left to process for %s (resume already complete)",
+                        folder_path)
+            return [], []
 
     # One up-front check: can the LLM actually do inference (valid API key)?
     # If not, we keep every deterministic finding but skip the per-finding AI
@@ -125,6 +147,31 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str
 
     visible: list[dict] = []
     filtered: list[dict] = []
+    total = len(sem_findings)
+    processed = 0
+
+    def _persist(outcome):
+        nonlocal processed
+        processed += 1
+        if outcome is not None:
+            if outcome.action == "suppress":
+                filtered.append(outcome.finding)
+            else:
+                visible.append(outcome.finding)
+                # A persistence hiccup on one finding must not sink the whole scan.
+                try:
+                    save_findings_to_db([outcome.finding])
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("LSAST: incremental persist failed: %s", exc)
+        # Runs for every attempted finding (errored/suppressed/visible alike) so
+        # the progress bar reflects real work done, not just visible findings.
+        # This now runs once per finding (was once per scan pre-refactor), so a
+        # transient failure here (e.g. a SQLite write-lock from a concurrent
+        # cancel-view write) must not be allowed to kill the whole scan.
+        try:
+            update_progress(scan_id, scanned=processed, total=total, findings=len(visible))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("LSAST: progress update failed: %s", exc)
 
     # The per-finding LLM work (verify + enrich) is the wall-time bottleneck.
     # Run it concurrently across findings with a small, bounded worker pool —
@@ -135,37 +182,40 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str
     # `ex.map` preserves input order, so the visible/filtered partition is
     # identical to the serial path regardless of completion order. A single
     # worker (LSAST_MAX_WORKERS=1) or a single finding takes the serial branch.
+    # Persisting each result as ex.map yields it (rather than collecting into a
+    # list first) is what makes persistence progressive instead of batched.
     workers = _max_workers()
+    cancelled = False
     if workers > 1 and len(sem_findings) > 1:
-        with ThreadPoolExecutor(max_workers=workers,
-                                thread_name_prefix="lsast") as ex:
-            outcomes = list(ex.map(
-                lambda sf: _process_one(sf, scan_id, triggered_by, llm_ok),
-                sem_findings))
-    else:
-        outcomes = [_process_one(sf, scan_id, triggered_by, llm_ok)
-                    for sf in sem_findings]
-
-    # Partition + persist serially, in detector order, on this thread. Keeping
-    # save/progress out of the pool avoids cross-thread DB sessions and keeps the
-    # incremental "findings appear live" semantics (count grows as we persist).
-    for outcome in outcomes:
-        if outcome is None:                 # this finding errored in _process_one
-            continue
-        if outcome.action == "suppress":
-            filtered.append(outcome.finding)
-            continue
-        visible.append(outcome.finding)
-
-        # A persistence hiccup on one finding must not sink the whole scan.
+        ex = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="lsast")
         try:
-            save_findings_to_db([outcome.finding])
-            update_progress(scan_id, findings=len(visible))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("LSAST: incremental persist failed: %s", exc)
+            # ex.map() yields in submission order, not completion order -- a
+            # slow finding can delay faster ones behind it in the list from
+            # persisting, bounded by `workers` items. Still far better than
+            # the old batch-everything-then-persist behavior.
+            for outcome in ex.map(
+                    lambda sf: _process_one(sf, scan_id, triggered_by, llm_ok), sem_findings):
+                _persist(outcome)
+                if cancel_event is not None and cancel_event.is_set():
+                    cancelled = True
+                    break
+        finally:
+            # On cancel: don't wait for/run not-yet-started work; already-started
+            # calls (bounded by `workers`) finish on their own and their results
+            # are simply never persisted, since we've stopped consuming the
+            # iterator. On the normal path this is identical to the old `with`
+            # block's default wait=True behavior.
+            ex.shutdown(wait=not cancelled, cancel_futures=cancelled)
+    else:
+        for sf in sem_findings:
+            _persist(_process_one(sf, scan_id, triggered_by, llm_ok))
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                break
 
     logger.info(
-        "LSAST done: %d Semgrep → %d visible (%d needs_review) + %d filtered",
+        "LSAST done%s: %d Semgrep -> %d visible (%d needs_review) + %d filtered",
+        " (cancelled)" if cancelled else "",
         len(sem_findings),
         len(visible),
         sum(1 for f in visible if f.get("status") == "needs_review"),

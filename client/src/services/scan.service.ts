@@ -54,6 +54,14 @@ class ScanService extends BaseApiClient {
     return this.delete<void>(`api/scans/delete/${scanId}/`);
   }
 
+  async cancelScan(scanId: string): Promise<{ detail: string }> {
+    return this.post<{ detail: string }>(`api/scans/${scanId}/cancel/`);
+  }
+
+  async resumeScan(scanId: string): Promise<{ detail: string; scan: ScanDetails }> {
+    return this.post<{ detail: string; scan: ScanDetails }>(`api/scans/${scanId}/resume/`);
+  }
+
   async deleteSbomScan(scanId: string): Promise<void> {
     return this.delete<void>(`api/scans/sbom/delete/${scanId}/`);
   }

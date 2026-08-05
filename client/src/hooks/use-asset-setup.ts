@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, isTauri } from '@tauri-apps/api/core';
 
 export type AssetSetupState =
   | { status: 'pending'; progress: Record<string, { bytes: number; total: number }> }
@@ -18,6 +18,15 @@ export function useAssetSetup(): AssetSetupState & { retry: () => void } {
   const [state, setState] = useState<AssetSetupState>({ status: 'pending', progress: {} });
 
   useEffect(() => {
+    // The desktop build downloads/reassembles the model + vuln DB on first
+    // launch and reports progress over Tauri IPC; the web build (this repo's
+    // primary target) has no such step -- those assets are already available
+    // server-side -- so there is nothing to wait for outside Tauri.
+    if (!isTauri()) {
+      setState({ status: 'ready' });
+      return;
+    }
+
     let cancelled = false;
     const unlisten: Array<() => void> = [];
 
