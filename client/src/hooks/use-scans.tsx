@@ -5,8 +5,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 // Poll while a scan is running so the updates page reflects live progress
 // (status, findings count, completion) without a manual refresh; stop once the
-// scan reaches a terminal state.
-const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'];
+// scan reaches a terminal state. 'interrupted' stops here too -- the pipeline
+// isn't making progress anymore until a user explicitly resumes it.
+const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled', 'interrupted'];
 const SCAN_POLL_MS = 2500;
 
 export function useScanDetails(scanId: string) {
@@ -57,6 +58,30 @@ export function useDeleteScan() {
     mutationFn: (scanId: string) =>
       scanService.deleteScan(scanId),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['scans', 'list'] });
+    },
+  });
+}
+
+export function useCancelScan() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (scanId: string) => scanService.cancelScan(scanId),
+    onSuccess: (_data, scanId) => {
+      queryClient.invalidateQueries({ queryKey: ['scans', scanId] });
+      queryClient.invalidateQueries({ queryKey: ['scans', 'list'] });
+    },
+  });
+}
+
+export function useResumeScan() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (scanId: string) => scanService.resumeScan(scanId),
+    onSuccess: (_data, scanId) => {
+      queryClient.invalidateQueries({ queryKey: ['scans', scanId] });
       queryClient.invalidateQueries({ queryKey: ['scans', 'list'] });
     },
   });

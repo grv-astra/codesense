@@ -1,12 +1,17 @@
 import { useState, useEffect } from 'react';
-import { Clock, FileText, Shield, CheckCircle, AlertTriangle, Activity, Code, Layers } from 'lucide-react';
+import { Clock, FileText, Shield, CheckCircle, AlertTriangle, Activity, Code, Layers, PauseCircle, XCircle } from 'lucide-react';
+import { AxiosError } from 'axios';
+import { toast } from 'sonner';
 import { formatTimestamp } from '@/utils/timestampFormater';
 import type { ScanDetails } from '@/types/scan';
- 
+import { Button } from '@/components/atomic/button';
+import { ConfirmDialog } from '@/components/atomic/dialog-confirm';
+import { useCancelScan, useResumeScan } from '@/hooks/use-scans';
+
 interface ScanUpdateProps {
   scan?: ScanDetails;
 }
- 
+
 type ConfigComponent = {
   color: string,
   bgColor: string,
@@ -14,12 +19,21 @@ type ConfigComponent = {
   icon: React.ReactElement,
   progressColor: string
 }
- 
+
 interface ConfigLayout {
   completed: ConfigComponent,
   failed: ConfigComponent,
   in_progress: ConfigComponent,
+  interrupted: ConfigComponent,
+  cancelled: ConfigComponent,
   default   : ConfigComponent
+}
+
+function extractErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof AxiosError && error.response?.data?.detail) {
+    return error.response.data.detail;
+  }
+  return fallback;
 }
  
 function ScanUpdate({ scan }: ScanUpdateProps) {
@@ -61,6 +75,7 @@ function ScanUpdate({ scan }: ScanUpdateProps) {
     if (status === 'completed') return 'Scan Complete';
     if (status === 'failed') return 'Scan Failed';
     if (status === 'cancelled') return 'Scan Cancelled';
+    if (status === 'interrupted') return 'Scan Interrupted';
     if (status === 'pending') return 'Waiting to Start';
    
     const phase = phases.find(p => percentage >= p.start && percentage < p.end);
@@ -72,7 +87,29 @@ function ScanUpdate({ scan }: ScanUpdateProps) {
   const currentScan = scan || defaultScan;
   const percentage = calculatePercentage(currentScan);
   const currentPhase = getCurrentPhase(percentage, currentScan.status);
- 
+
+  const cancelScanMutation = useCancelScan();
+  const resumeScanMutation = useResumeScan();
+
+  const canCancel = currentScan.status === 'queued' || currentScan.status === 'in_progress';
+  const canResume = currentScan.status === 'interrupted' || currentScan.status === 'cancelled';
+
+  const handleCancel = () => {
+    cancelScanMutation.mutate(currentScan.id, {
+      onError: (error) => {
+        toast('Cancel failed', { description: extractErrorMessage(error, 'Could not cancel the scan. Please try again.') });
+      },
+    });
+  };
+
+  const handleResume = () => {
+    resumeScanMutation.mutate(currentScan.id, {
+      onError: (error) => {
+        toast('Resume failed', { description: extractErrorMessage(error, 'Could not resume the scan. Please try again.') });
+      },
+    });
+  };
+
   useEffect(() => {
     const timer = setTimeout(() => {
       setAnimatedProgress(percentage);
@@ -102,6 +139,20 @@ function ScanUpdate({ scan }: ScanUpdateProps) {
         borderColor: 'border-blue-600/20',
         icon: <Activity className="w-5 h-5 animate-pulse" />,
         progressColor: 'bg-blue-600'
+      },
+      interrupted: {
+        color: 'text-amber-600',
+        bgColor: 'bg-amber-600/10',
+        borderColor: 'border-amber-600/20',
+        icon: <PauseCircle className="w-5 h-5" />,
+        progressColor: 'bg-amber-600'
+      },
+      cancelled: {
+        color: 'text-[#404040] dark:text-[#a3a3a3]',
+        bgColor: 'bg-[#404040]/10',
+        borderColor: 'border-[#404040]/20',
+        icon: <XCircle className="w-5 h-5" />,
+        progressColor: 'bg-[#404040]'
       },
       default: {
         color: 'text-[#2d2d2d] dark:text-[#e5e5e5]',
@@ -138,11 +189,34 @@ function ScanUpdate({ scan }: ScanUpdateProps) {
                 ID: {currentScan.id}
               </p>
             </div>
-            <div className={`flex items-center gap-2 px-4 py-2 rounded-full ${statusConfig.bgColor} border ${statusConfig.borderColor}`}>
-              <span className={statusConfig.color}>{statusConfig.icon}</span>
-              <span className={`text-sm font-semibold capitalize ${statusConfig.color}`}>
-                {currentScan.status.replace('_', ' ')}
-              </span>
+            <div className="flex items-center gap-3">
+              <div className={`flex items-center gap-2 px-4 py-2 rounded-full ${statusConfig.bgColor} border ${statusConfig.borderColor}`}>
+                <span className={statusConfig.color}>{statusConfig.icon}</span>
+                <span className={`text-sm font-semibold capitalize ${statusConfig.color}`}>
+                  {currentScan.status.replace('_', ' ')}
+                </span>
+              </div>
+
+              {canCancel && (
+                <ConfirmDialog
+                  trigger={
+                    <Button variant="outline" size="sm" disabled={cancelScanMutation.isPending}>
+                      {cancelScanMutation.isPending ? 'Cancelling…' : 'Cancel Scan'}
+                    </Button>
+                  }
+                  title="Cancel this scan?"
+                  description="The scan will stop as soon as possible. You'll be able to resume it later without losing findings already found."
+                  confirmLabel="Cancel Scan"
+                  cancelLabel="Keep Scanning"
+                  onConfirm={handleCancel}
+                />
+              )}
+
+              {canResume && (
+                <Button size="sm" disabled={resumeScanMutation.isPending} onClick={handleResume}>
+                  {resumeScanMutation.isPending ? 'Resuming…' : 'Resume Scan'}
+                </Button>
+              )}
             </div>
           </div>
         </div>
