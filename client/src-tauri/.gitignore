@@ -6,4 +6,6 @@
 /resources/model
 /resources/tools
 /resources/grype-db
+/resources/llama-runtime
+/resources/semgrep-rules
 /webview2
