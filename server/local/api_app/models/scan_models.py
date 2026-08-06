@@ -1,10 +1,27 @@
 from datetime import datetime, timezone
-from django.db.models import Q
+from django.db.models import Count, Q
 from local.api_app.models.orm import Scan, Finding
 
 
 def _iso(dt):
     return dt.isoformat() if dt else None
+
+
+def _severity_counts(scan_id):
+    """Per-scan finding counts by severity, for the scan detail view.
+
+    Scoped to a single scan (unlike dashboard_views._get_severity_counts,
+    which aggregates across every finding) -- only computed in find_by_id(),
+    never in the paginated list, to avoid an aggregation query per row.
+    """
+    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    rows = (Finding.objects.filter(scan_id=scan_id, deleted=False)
+            .values("severity").annotate(count=Count("id")))
+    for r in rows:
+        sev = str(r["severity"] or "").lower()
+        if sev in counts:
+            counts[sev] = r["count"]
+    return counts
 
 
 class ScanModel:
@@ -57,7 +74,10 @@ class ScanModel:
 
     @classmethod
     def find_by_id(cls, scan_id: str):
-        return cls.serialize(Scan.objects.filter(id=scan_id).first())
+        data = cls.serialize(Scan.objects.filter(id=scan_id).first())
+        if data is not None:
+            data["severity_counts"] = _severity_counts(scan_id)
+        return data
 
     @classmethod
     def find_by_project(cls, project_id: str, page=1, limit=10, search=""):

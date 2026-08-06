@@ -3,6 +3,13 @@ interface FolderMetrics {
     total_functions: number,
     languages: string[]
 }
+export interface SeverityCounts {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+}
+
 export interface ScanDetails {
   id: string;
   project_id: string;
@@ -14,7 +21,9 @@ export interface ScanDetails {
   created_at: string;
   end_time: string | null;
   triggered_by: string;
-  metrics: FolderMetrics
+  metrics: FolderMetrics;
+  error?: string;
+  severity_counts?: SeverityCounts;
 }
  
 export interface SbomScanDetails {

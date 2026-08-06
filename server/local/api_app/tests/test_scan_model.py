@@ -33,3 +33,26 @@ class ScanModelTests(TestCase):
         self.assertTrue(ScanModel.delete_scan(s["id"]))
         self.assertIsNone(ScanModel.find_by_id(s["id"]))
         self.assertEqual(Finding.objects.filter(scan_id=s["id"]).count(), 0)
+
+    def test_find_by_id_includes_per_scan_severity_counts(self):
+        s = ScanModel.create({"project_id": "p", "scan_name": "S"})
+        other = ScanModel.create({"project_id": "p", "scan_name": "Other"})
+        now = datetime.now(timezone.utc)
+        Finding.objects.create(scan_id=s["id"], created_at=now, severity="critical")
+        Finding.objects.create(scan_id=s["id"], created_at=now, severity="critical")
+        Finding.objects.create(scan_id=s["id"], created_at=now, severity="low")
+        # A finding on a different scan must not bleed into this scan's counts.
+        Finding.objects.create(scan_id=other["id"], created_at=now, severity="high")
+        result = ScanModel.find_by_id(s["id"])
+        self.assertEqual(
+            result["severity_counts"],
+            {"critical": 2, "high": 0, "medium": 0, "low": 1},
+        )
+
+    def test_find_by_id_severity_counts_all_zero_with_no_findings(self):
+        s = ScanModel.create({"project_id": "p", "scan_name": "S"})
+        result = ScanModel.find_by_id(s["id"])
+        self.assertEqual(
+            result["severity_counts"],
+            {"critical": 0, "high": 0, "medium": 0, "low": 0},
+        )

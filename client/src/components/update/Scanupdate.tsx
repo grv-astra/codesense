@@ -1,12 +1,33 @@
 import { useState, useEffect } from 'react';
-import { Clock, FileText, Shield, CheckCircle, AlertTriangle, Activity, Code, Layers, PauseCircle, XCircle } from 'lucide-react';
+import { Clock, Calendar, Shield, CheckCircle, AlertTriangle, Activity, Code, Layers, PauseCircle, XCircle } from 'lucide-react';
 import { AxiosError } from 'axios';
 import { toast } from 'sonner';
 import { formatTimestamp } from '@/utils/timestampFormater';
 import type { ScanDetails } from '@/types/scan';
 import { Button } from '@/components/atomic/button';
 import { ConfirmDialog } from '@/components/atomic/dialog-confirm';
+import { SecurityBadge } from '@/components/atomic/enum-badge';
 import { useCancelScan, useResumeScan } from '@/hooks/use-scans';
+
+const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'] as const;
+
+function formatDuration(scan: ScanDetails): string {
+  if (!scan.created_at) return '—';
+  // Only a running scan can legitimately use "now" as the end boundary --
+  // a terminal scan (failed/cancelled/interrupted) with no recorded end_time
+  // has an unknown duration, not "however long ago it was created".
+  if (!scan.end_time && scan.status !== 'in_progress' && scan.status !== 'queued') return '—';
+  const start = new Date(scan.created_at.replace(/(\.\d{3})\d+/, '$1'));
+  if (isNaN(start.getTime())) return '—';
+  const end = scan.end_time ? new Date(scan.end_time.replace(/(\.\d{3})\d+/, '$1')) : new Date();
+  const totalSeconds = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
 
 interface ScanUpdateProps {
   scan?: ScanDetails;
@@ -220,7 +241,20 @@ function ScanUpdate({ scan }: ScanUpdateProps) {
             </div>
           </div>
         </div>
- 
+
+        {/* Error Banner — only when there's actually something to explain */}
+        {(currentScan.status === 'failed' || currentScan.status === 'interrupted') && currentScan.error && (
+          <div className="rounded-2xl border border-red-200 dark:border-red-900/40 bg-red-50 dark:bg-red-950/20 p-5 flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+            <div>
+              <div className="text-sm font-semibold text-red-700 dark:text-red-400">
+                {currentScan.status === 'failed' ? 'Scan failed' : 'Scan interrupted'}
+              </div>
+              <p className="text-sm text-red-600 dark:text-red-400/90 mt-1">{currentScan.error}</p>
+            </div>
+          </div>
+        )}
+
         {/* Main Content Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
          
@@ -311,47 +345,55 @@ function ScanUpdate({ scan }: ScanUpdateProps) {
           <div className="lg:col-span-2 space-y-6">
            
             {/* Scan Stats Grid */}
-            <div className="rounded-2xl shadow-lg border border-[#e5e5e5] dark:border-[#404040] p-6 grid lg:grid-cols-2 xl:grid-cols-4 gap-4">
-              <div className="bg-[#bf0000]/20 rounded-xl shadow-lg p-5 transform transition-transform hover:scale-105">
-                <div className="flex justify-between gap-3 mb-2">
-                  <div className="text-sm opacity-90 font-medium">Total Files</div>
-                  <div className="p-2 bg-[#bf0000]/10 rounded-lg"><FileText className="w-8 h-8 text-[#bf0000]" /></div>
-                </div>
-                <div className="text-3xl font-bold mb-1">{currentScan.total_files}</div>
-              </div>
-             
-              <div className="bg-[#bf0000]/20 rounded-xl shadow-lg p-5 transform transition-transform hover:scale-105">
-                <div className="flex justify-between gap-3 mb-2">
-                  <div className="text-sm opacity-90 font-medium">Scanned</div>
-                  <div className="p-2 bg-[#bf0000]/10 rounded-lg"><CheckCircle className="w-8 h-8 text-[#bf0000]" /></div>
-                </div>
-                <div className="text-3xl font-bold mb-1">{currentScan.files_scanned}</div>
-              </div>
-             
+            <div className="rounded-2xl shadow-lg border border-[#e5e5e5] dark:border-[#404040] p-6 grid lg:grid-cols-3 gap-4">
               <div className="bg-[#bf0000]/20 rounded-xl shadow-lg p-5 transform transition-transform hover:scale-105">
                 <div className="flex justify-between gap-3 mb-2">
                   <div className="text-sm opacity-90 font-medium">Findings</div>
                   <div className="p-2 bg-[#bf0000]/10 rounded-lg"><AlertTriangle className="w-8 h-8 text-[#bf0000]" /></div>
                 </div>
-                <div className="text-3xl font-bold mb-1">{currentScan.findings}</div>
+                <div className="text-3xl font-bold mb-2">{currentScan.findings}</div>
+                {currentScan.severity_counts && (
+                  <div className="flex flex-wrap gap-2">
+                    {SEVERITY_ORDER.filter(sev => (currentScan.severity_counts?.[sev] ?? 0) > 0).map(sev => (
+                      <span key={sev} className="flex items-center gap-1">
+                        <SecurityBadge severity={sev} size="sm" />
+                        <span className="text-xs font-semibold">{currentScan.severity_counts?.[sev]}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
-             
+
+              <div className="bg-[#bf0000]/20 rounded-xl shadow-lg p-5 transform transition-transform hover:scale-105">
+                <div className="flex justify-between gap-3 mb-2">
+                  <div className="text-sm font-medium opacity-90">
+                    {currentScan.status === 'in_progress' ? 'Running For' : 'Duration'}
+                  </div>
+                  <div className="p-2 bg-[#bf0000]/10 rounded-lg"><Clock className="w-8 h-8 text-[#bf0000]" /></div>
+                </div>
+                <div className="text-3xl font-bold mb-1">{formatDuration(currentScan)}</div>
+              </div>
+
               <div className="bg-[#bf0000]/20 rounded-xl shadow-lg p-5 transform transition-transform hover:scale-105">
                 <div className="flex justify-between gap-3 mb-2">
                   <div className="text-sm font-medium opacity-90">Started</div>
-                  <div className="p-2 bg-[#bf0000]/10 rounded-lg"><Clock className="w-8 h-8 text-[#bf0000]" /></div>
+                  <div className="p-2 bg-[#bf0000]/10 rounded-lg"><Calendar className="w-8 h-8 text-[#bf0000]" /></div>
                 </div>
                 <div className="text-base font-semibold">{formatTimestamp(currentScan.created_at)}</div>
               </div>
             </div>
  
-            {/* Code Analysis Stats */}
-            <div className="bg-white dark:bg-[#2d2d2d] rounded-2xl shadow-lg border border-[#e5e5e5] dark:border-[#404040] p-6">
-              <h2 className="text-lg font-semibold text-[#2d2d2d] dark:text-white mb-4 flex items-center gap-2">
-                <Code className="w-5 h-5 text-[#bf0000]" />
+            {/* Code Analysis Stats — size/composition only, not a risk signal, so it's
+                deliberately lower-emphasis than the Findings/Duration/Started stats above. */}
+            <div className="bg-white dark:bg-[#2d2d2d] rounded-2xl border border-[#e5e5e5] dark:border-[#404040] p-6">
+              <h2 className="text-base font-medium text-[#404040] dark:text-[#a3a3a3] mb-1 flex items-center gap-2">
+                <Code className="w-4 h-4" />
                 Code Analysis Overview
               </h2>
-             
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+                Size and composition of the scanned code — not a security signal.
+              </p>
+
               <div className="grid lg:grid-cols-2 xl:grid-cols-3 gap-4">
                 <div className="p-4 bg-[#e5e5e5] dark:bg-[#1a1a1a] rounded-xl border border-[#e5e5e5] dark:border-[#404040]">
                   <div className="flex items-center gap-3 mb-2">
@@ -381,8 +423,8 @@ function ScanUpdate({ scan }: ScanUpdateProps) {
                   <div className="text-sm text-gray-600 dark:text-gray-400 font-medium mb-2">Languages</div>
                     <div className='flex flex-wrap gap-2'>
                       {
-                        currentScan.metrics.languages.map((lang, index) => (
-                          <span className='bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-2xl capitalize'>
+                        currentScan.metrics.languages.map((lang) => (
+                          <span key={lang} className='bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-2xl capitalize'>
                             {lang}
                           </span>
                         ))
