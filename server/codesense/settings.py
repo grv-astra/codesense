@@ -76,6 +76,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'licenses.middleware.ActivationRequiredMiddleware',
     'licenses.middleware.ReadOnlyGraceMiddleware',
 ]
 
@@ -196,6 +197,12 @@ LOCAL_KEYS_DIR = os.getenv("LOCAL_KEYS_DIR")
 # Offline license (Phase 4): self-contained, runs N days from first launch.
 LICENSE_DURATION_DAYS = int(os.getenv("LICENSE_DURATION_DAYS", "90"))
 LICENSE_SECRET = os.getenv("LICENSE_SECRET")  # build-injected; dev falls back to a constant
+
+# One-time activation gate (Phase: client-delivery hardening). A bcrypt hash of
+# the activation password, build-injected via main.rs -- unset in dev/from-
+# source runs, which leaves the gate fully disabled (see licenses/services/
+# activation.py::is_configured()).
+ACTIVATION_PASSWORD_HASH = os.getenv("ACTIVATION_PASSWORD_HASH")
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
