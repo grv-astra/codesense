@@ -7,6 +7,7 @@ import zipfile
 from datetime import datetime, timezone
 from unittest import mock
 
+from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, TransactionTestCase
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -580,3 +581,27 @@ class ScanResumeViewTests(TransactionTestCase):
             response = ScanResumeView.post.__wrapped__(ScanResumeView(), request, scan_id=scan.id)
             self.assertEqual(response.status_code, 202)
             _join_scan_thread()
+
+
+class MediaRootResolutionTests(TestCase):
+    """Regression coverage for a real production bug: MEDIA_ROOT used to be
+    BASE_DIR-relative (server/media/scans), which sits inside this repo's git
+    working tree. OpenGrep's directory walker silently enumerates 0 files for
+    any path inside a git working tree (documented in CLAUDE.md's "Windows/git
+    gotcha") -- so once source retention (Task 11) started extracting zips
+    there instead of into tempfile.mkdtemp(), every zip-uploaded code scan run
+    from source found 0 findings, with no error surfaced anywhere."""
+
+    def test_defaults_outside_the_repo_when_codesense_data_dir_unset(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CODESENSE_DATA_DIR", None)
+            root = scan_views._resolve_media_root()
+        self.assertFalse(root.startswith(str(settings.BASE_DIR)))
+        self.assertEqual(root, os.path.join(tempfile.gettempdir(), "codesense-media", "scans"))
+
+    @mock.patch.dict(os.environ, {"CODESENSE_DATA_DIR": os.path.join(tempfile.gettempdir(), "external-app-data")})
+    def test_respects_codesense_data_dir_when_set(self):
+        root = scan_views._resolve_media_root()
+        expected = os.path.join(tempfile.gettempdir(), "external-app-data", "media", "scans")
+        self.assertEqual(root, expected)
+        self.assertFalse(root.startswith(str(settings.BASE_DIR)))

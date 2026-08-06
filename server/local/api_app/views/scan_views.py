@@ -2,7 +2,6 @@ import os, zipfile, uuid
 import tempfile
 from django.db import close_old_connections
 from django.http import JsonResponse
-from django.conf import settings
 from local.api_app.models.scan_models import ScanModel
 from local.api_app.serializers.scan_serializers import ScanStartSerializer
 from django.views.decorators.csrf import csrf_exempt
@@ -36,7 +35,27 @@ scan_thread_lock = threading.Lock()
 _cancel_events: dict[str, threading.Event] = {}
 
 
-MEDIA_ROOT = os.path.join(settings.BASE_DIR, "media", "scans")
+def _resolve_media_root() -> str:
+    """Where extracted scan sources are durably retained (so an interrupted/
+    cancelled scan can be resumed after a restart).
+
+    Must NOT resolve to anywhere inside a git working tree: OpenGrep's
+    directory walker silently enumerates 0 files for any path inside a git
+    repo (see CLAUDE.md's "Windows/git gotcha"), so settings.BASE_DIR
+    (server/, tracked by this repo) is unsafe here even though other app
+    data safely uses it. Respects CODESENSE_DATA_DIR -- the packaged app's
+    real external app-data directory (set by the Tauri launcher, see
+    client/src-tauri/src/main.rs), matching settings.DATA_DIR's own
+    convention -- when set; otherwise falls back to the OS temp directory,
+    which by definition is never inside any git repo.
+    """
+    data_dir = os.getenv("CODESENSE_DATA_DIR")
+    if data_dir:
+        return os.path.join(data_dir, "media", "scans")
+    return os.path.join(tempfile.gettempdir(), "codesense-media", "scans")
+
+
+MEDIA_ROOT = _resolve_media_root()
 os.makedirs(MEDIA_ROOT, exist_ok=True)
 
 
