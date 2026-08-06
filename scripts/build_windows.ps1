@@ -179,13 +179,42 @@ if (-not $SkipTools) {
     Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $outFile -UseBasicParsing
   }
 
-  foreach ($tool in @("syft", "grype", "grant")) {
+  foreach ($tool in @("syft", "grype")) {
     $zip = Join-Path $tmp "$tool.zip"
     Get-GhAsset "anchore/$tool" "_windows_amd64\.zip$" $zip
     Expand-Archive -Path $zip -DestinationPath (Join-Path $tmp $tool) -Force
     Copy-Item (Join-Path (Join-Path $tmp $tool) "$tool.exe") (Join-Path $ResTools "$tool.exe") -Force
   }
   Get-GhAsset "sigstore/cosign" "cosign-windows-amd64\.exe$" (Join-Path $ResTools "cosign.exe")
+
+  # anchore/grant publishes no Windows release asset at all (confirmed against
+  # the live v0.6.8 release -- only darwin/linux/deb/rpm), so it can't be
+  # fetched like syft/grype/cosign above; a real run of the old all-in-one
+  # loop would Die here. Build it from source instead.
+  #
+  # Pinned to v0.5.7, not "latest": v0.6.8's go.mod needs go >=1.26.3 (forces
+  # a toolchain auto-download) and vendors syft as a library (~150+
+  # transitive deps incl. AWS/GCP SDKs); v0.5.7 only needs go 1.24.6 and has
+  # a far smaller graph. CGO_ENABLED=0: grant's sqlite driver is the pure-Go
+  # modernc.org/sqlite, so it doesn't actually need cgo -- important on hosts
+  # where the cgo/gcc toolchain itself is broken (even a trivial hello-world
+  # cgo build fails on some of these). Only bump the version pin after
+  # confirming `CGO_ENABLED=0 go build ./cmd/grant` succeeds on the actual
+  # build host first.
+  Assert-Cmd git "Install Git for Windows."
+  Assert-Cmd go  "Install Go from go.dev (needed to build grant from source -- anchore/grant ships no Windows binary)."
+  $GrantVersion = "v0.5.7"
+  $grantSrc = Join-Path $tmp "grant-src"
+  Invoke-Native { git clone --depth 1 --branch $GrantVersion https://github.com/anchore/grant.git $grantSrc } "grant clone"
+  Push-Location $grantSrc
+  try {
+    $env:CGO_ENABLED = "0"
+    Invoke-Native { go build -o (Join-Path $ResTools "grant.exe") ./cmd/grant } "grant build"
+  } finally {
+    Remove-Item Env:\CGO_ENABLED -ErrorAction SilentlyContinue
+    Pop-Location
+  }
+  Ok "grant $GrantVersion built from source -> resources\tools\grant.exe"
 
   # OpenGrep (OSS Semgrep fork) — a single-file native binary, staged as
   # semgrep.exe (the launcher sets SEMGREP_BIN to <tools>\semgrep). Pinned to
