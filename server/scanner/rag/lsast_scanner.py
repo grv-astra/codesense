@@ -147,12 +147,8 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str,
 
     visible: list[dict] = []
     filtered: list[dict] = []
-    total = len(sem_findings)
-    processed = 0
 
     def _persist(outcome):
-        nonlocal processed
-        processed += 1
         if outcome is not None:
             if outcome.action == "suppress":
                 filtered.append(outcome.finding)
@@ -164,12 +160,19 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str,
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("LSAST: incremental persist failed: %s", exc)
         # Runs for every attempted finding (errored/suppressed/visible alike) so
-        # the progress bar reflects real work done, not just visible findings.
+        # the live findings count reflects real work done, not just visible
+        # findings. Deliberately does NOT pass scanned=/total= here: those map
+        # to the scan's total_files/files_scanned columns (real file counts set
+        # by the AST-analysis step), and len(sem_findings) is a findings count,
+        # not a file count -- passing it here used to silently overwrite
+        # total_files with the findings total mid-scan (and it would stick
+        # after completion too, since nothing resets it), making "Total Files"
+        # and "Scanned" on the updates page show two unrelated numbers.
         # This now runs once per finding (was once per scan pre-refactor), so a
         # transient failure here (e.g. a SQLite write-lock from a concurrent
         # cancel-view write) must not be allowed to kill the whole scan.
         try:
-            update_progress(scan_id, scanned=processed, total=total, findings=len(visible))
+            update_progress(scan_id, findings=len(visible))
         except Exception as exc:  # noqa: BLE001
             logger.warning("LSAST: progress update failed: %s", exc)
 

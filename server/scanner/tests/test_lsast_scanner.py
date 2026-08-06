@@ -65,6 +65,30 @@ class LsastScanFolderTests(SimpleTestCase):
         self.assertEqual(len(saved_arg), 1)
         self.assertEqual(saved_arg[0]["cwe"], "CWE-89")
 
+    @mock.patch("scanner.rag.lsast_scanner.update_progress")
+    @mock.patch("scanner.rag.lsast_scanner.save_findings_to_db")
+    @mock.patch("scanner.rag.lsast_scanner.verify")
+    @mock.patch("scanner.rag.lsast_scanner.run_semgrep")
+    def test_per_finding_progress_never_touches_file_counts(
+            self, mock_run, mock_verify, mock_save, mock_progress):
+        # Regression: the per-finding progress callback used to pass
+        # scanned=/total= using a *findings* count, silently overwriting the
+        # scan's total_files/files_scanned (real file counts) with an
+        # unrelated number. It must only ever report the live findings count.
+        mock_run.return_value = [_sqli_finding(), _safe_orm_finding()]
+        mock_verify.side_effect = [
+            VerifierVerdict("TP", "unsanitized concat", 0.9),
+            VerifierVerdict("FP", "Django ORM parameterizes", 0.95),
+        ]
+        lsast_scan_folder(folder_path="/tmp/code", scan_id="s1", triggered_by="user-1")
+        for call in mock_progress.call_args_list:
+            self.assertNotIn("scanned", call.kwargs)
+            self.assertNotIn("total", call.kwargs)
+        findings_calls = [c.kwargs["findings"] for c in mock_progress.call_args_list
+                          if "findings" in c.kwargs]
+        # one visible finding overall, reported live as work completes
+        self.assertIn(1, findings_calls)
+
     @mock.patch("scanner.rag.lsast_scanner.save_findings_to_db")
     @mock.patch("scanner.rag.lsast_scanner.verify")
     @mock.patch("scanner.rag.lsast_scanner.run_semgrep")

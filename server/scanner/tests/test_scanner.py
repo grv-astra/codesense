@@ -13,7 +13,8 @@ class ScanFolderTests(SimpleTestCase):
                        return_value=(["finding"], ["filtered"]))
     @mock.patch.object(scanner_module, "update_progress")
     @mock.patch.object(scanner_module, "analyze_folder",
-                       return_value={"total_loc": 10, "total_functions": 2, "languages": ["python"]})
+                       return_value={"total_loc": 10, "total_functions": 2, "languages": ["python"],
+                                     "total_files": 5})
     def test_runs_lsast_and_marks_scan_completed(self, mock_ast, mock_update, mock_lsast, mock_trial):
         result = scanner_module.scan_folder("/x", "s1", "user-1", "Scan #1")
         # returns the visible findings from the LSAST pipeline
@@ -28,6 +29,12 @@ class ScanFolderTests(SimpleTestCase):
         completed = [c for c in mock_update.call_args_list if c.kwargs.get("status") == "completed"]
         self.assertEqual(len(completed), 1)
         self.assertEqual(completed[0].kwargs.get("findings"), 1)
+        # Regression: total_files must be re-asserted (not just files_scanned) at
+        # completion, using the real AST-derived file count -- previously the
+        # LSAST loop's per-finding progress updates could leave total_files
+        # holding a findings count instead, with nothing correcting it back.
+        self.assertEqual(completed[0].kwargs.get("total"), 5)
+        self.assertEqual(completed[0].kwargs.get("scanned"), 5)
         # a successful completion consumes a trial slot (no-op when trial mode is off)
         mock_trial.assert_called_once()
 
