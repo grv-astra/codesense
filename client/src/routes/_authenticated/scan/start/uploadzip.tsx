@@ -89,9 +89,9 @@ function RouteComponent() {
   const createScanMutation = useCreateScan();
   const createSbomScanMutation = useCreateSbomScan();
 
-  // Trial mode (driven by the backend): caps scans, code and SBOM alike.
+  // Trial mode (driven by the backend): code and SBOM each have their OWN
+  // limit, so which one applies depends on the scan type currently selected.
   const { data: trial } = useTrialStatus();
-  const trialBlocked = isTrialExhausted(trial);
 
   const [formData, setFormData] = useState<CreateScanDetails>({
     scan_name: '',
@@ -99,6 +99,10 @@ function RouteComponent() {
     zip_file: null,
     project_id: '',
   });
+
+  const activeTrialType: 'code' | 'sbom' = formData.scan_type === 'sbom' ? 'sbom' : 'code';
+  const trialBlocked = isTrialExhausted(trial, activeTrialType);
+  const activeTrialStatus = trial?.[activeTrialType];
 
   const { data: projects = [] } = useProjectNames();
   const [isDragOver, setIsDragOver] = useState(false);
@@ -389,12 +393,12 @@ function RouteComponent() {
             {/* Footer */}
             <div className="px-7 py-4 border-t border-gray-100 dark:border-white/[0.07] flex items-center justify-between gap-4">
               <div className="text-[12px] text-gray-400 dark:text-gray-500">
-                {trial?.trial_mode ? (
+                {trial?.trial_mode && activeTrialStatus ? (
                   <span className={trialBlocked ? 'text-red-600 dark:text-red-400 font-medium' : ''}>
-                    Trial: {trial.used}/{trial.limit} scans used
+                    Trial: {activeTrialStatus.used}/{activeTrialStatus.limit} {activeTrialType === 'sbom' ? 'SBOM' : 'code'} scans used
                     {trialBlocked
                       ? ' — limit reached. Contact us to upgrade.'
-                      : ` (${trial.remaining} left)`}
+                      : ` (${activeTrialStatus.remaining} left)`}
                   </span>
                 ) : (
                   'All fields are required to start a scan.'

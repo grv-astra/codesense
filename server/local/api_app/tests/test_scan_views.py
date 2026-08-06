@@ -180,8 +180,8 @@ class TrialSlotNotConsumedOnFailureTests(TestCase):
             "scan_name": "badzip-code-trial", "project_id": "p1", "zip_file": bad_file,
         })
         ScanCreateView.post.__wrapped__(ScanCreateView(), request)
-        self.assertEqual(trial.used(), 0)
-        self.assertTrue(trial.can_start())
+        self.assertEqual(trial.used(trial.CODE), 0)
+        self.assertTrue(trial.can_start(trial.CODE))
 
     def test_code_scan_thread_conflict_does_not_consume_a_slot(self):
         self._simulate_running_scan_thread()
@@ -190,7 +190,7 @@ class TrialSlotNotConsumedOnFailureTests(TestCase):
             "scan_name": "conflict-code-trial", "project_id": "p1", "zip_file": good_zip,
         })
         ScanCreateView.post.__wrapped__(ScanCreateView(), request)
-        self.assertEqual(trial.used(), 0)
+        self.assertEqual(trial.used(trial.CODE), 0)
 
     def test_sbom_scan_bad_zip_does_not_consume_a_slot(self):
         bad_file = SimpleUploadedFile("bad.zip", b"not a real zip", content_type="application/zip")
@@ -198,8 +198,8 @@ class TrialSlotNotConsumedOnFailureTests(TestCase):
             "scan_name": "badzip-sbom-trial", "project_id": "p1", "zip_file": bad_file,
         })
         SbomCreateView.post.__wrapped__(SbomCreateView(), request)
-        self.assertEqual(trial.used(), 0)
-        self.assertTrue(trial.can_start())
+        self.assertEqual(trial.used(trial.SBOM), 0)
+        self.assertTrue(trial.can_start(trial.SBOM))
 
     def test_sbom_scan_thread_conflict_does_not_consume_a_slot(self):
         self._simulate_running_scan_thread()
@@ -208,7 +208,7 @@ class TrialSlotNotConsumedOnFailureTests(TestCase):
             "scan_name": "conflict-sbom-trial", "project_id": "p1", "zip_file": good_zip,
         })
         SbomCreateView.post.__wrapped__(SbomCreateView(), request)
-        self.assertEqual(trial.used(), 0)
+        self.assertEqual(trial.used(trial.SBOM), 0)
 
     def test_grype_scan_thread_conflict_does_not_consume_a_slot(self):
         self._simulate_running_scan_thread()
@@ -217,7 +217,7 @@ class TrialSlotNotConsumedOnFailureTests(TestCase):
             "scan_name": "conflict-grype-trial", "project_id": "p1", "sbom_file": sbom_file,
         })
         GrypeCreateView.post.__wrapped__(GrypeCreateView(), request)
-        self.assertEqual(trial.used(), 0)
+        self.assertEqual(trial.used(trial.SBOM), 0)
 
 
 class SourceRetentionTests(TransactionTestCase):
@@ -558,7 +558,7 @@ class ScanResumeViewTests(TransactionTestCase):
     def test_resuming_a_cancelled_scan_is_blocked_by_the_trial_cap(self):
         from local.api_app.views.scan_views import ScanResumeView
         from licenses.services import trial
-        trial.record_completion()  # used=1, at the limit=1
+        trial.record_completion(trial.CODE)  # used=1, at the limit=1
         scan = self._make_scan(status="cancelled", source_path=tempfile.mkdtemp())
         request = self._resume_request(scan.id)
         response = ScanResumeView.post.__wrapped__(ScanResumeView(), request, scan_id=scan.id)
@@ -574,7 +574,7 @@ class ScanResumeViewTests(TransactionTestCase):
         when the trial is otherwise exhausted."""
         from local.api_app.views.scan_views import ScanResumeView
         from licenses.services import trial
-        trial.record_completion()  # used=1, at the limit=1
+        trial.record_completion(trial.CODE)  # used=1, at the limit=1
         scan = self._make_scan(status="interrupted", source_path=tempfile.mkdtemp())
         request = self._resume_request(scan.id)
         with mock.patch("local.api_app.views.scan_views.scan_folder", return_value=[]):

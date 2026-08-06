@@ -71,6 +71,13 @@ const GRYPE_DB_SCHEMA_VERSION: &str = "5";
 // different trial size, or set TRIAL_MODE to "false" for an unlimited build.
 const TRIAL_MODE: &str = "true";
 const TRIAL_SCAN_LIMIT: &str = "2";
+// One-time activation gate (licenses/services/activation.py). A bcrypt hash
+// of the activation password -- the plaintext is never baked in and never
+// given to the client; only whoever deploys this build types it once, on
+// the client's own machine, during setup. Until that happens every API
+// route is blocked. Leave empty ("") to ship a build with no activation gate
+// at all (e.g. for internal/ISec review builds).
+const ACTIVATION_PASSWORD_HASH: &str = "$2b$12$eMkfluHrQQnkUJt7y2DBOeokxmBovGdFIjVZ2B20mJVUeLuncfnPm";
 
 /// Windows Job Object wired with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: every
 /// process assigned to it is force-killed by the OS the instant the job's
@@ -275,6 +282,7 @@ fn spawn_backend(app: &tauri::AppHandle, grype_db_dir: &std::path::Path) -> Opti
         .env("LICENSE_DURATION_DAYS", LICENSE_DURATION_DAYS)
         .env("TRIAL_MODE", TRIAL_MODE)
         .env("TRIAL_SCAN_LIMIT", TRIAL_SCAN_LIMIT)
+        .env("ACTIVATION_PASSWORD_HASH", ACTIVATION_PASSWORD_HASH)
         .args(["127.0.0.1", BACKEND_PORT]);
 
     match cmd.spawn() {
@@ -489,18 +497,34 @@ fn ensure_assets_then_spawn(app: tauri::AppHandle) {
         let grype_target_dir = data_dir.join("grype-db");
         let grype_reassembly_dir = grype_target_dir.join(GRYPE_DB_SCHEMA_VERSION);
 
-        let model_path = match reassemble_with_retry(
-            &app, "model", &model_resource, &model_target_dir, &MODEL_ASSET,
-        ) {
-            Ok(path) => path,
-            Err(e) => {
-                let reason = if matches!(e, ReassemblyError::ManifestMissing | ReassemblyError::ManifestCorrupt(_)) {
-                    format!("reinstall required: {e}")
-                } else {
-                    e.to_string()
-                };
-                fail_setup(&app, "model", reason);
-                return;
+        // licenses/services/trial.py::_delete_model_if_present() deletes the
+        // reassembled model once the CODE-scan trial allowance is exhausted
+        // (SBOM scanning never uses it) and drops this marker beside it. The
+        // bundled .partNNN shards are still on disk in the install folder --
+        // reassemble_with_retry() would happily rebuild the model right back
+        // from them, silently undoing the deletion. So: if the marker is
+        // present, skip reassembly entirely and treat this as "no model" (not
+        // a setup failure) -- spawn_llama below handles a missing model file
+        // gracefully (llama-server just fails to start; the backend's own
+        // llm_health() check already fails open for verification, and new
+        // code scans are blocked by the trial cap regardless).
+        let model_exhausted_marker = model_target_dir.join("TRIAL_EXHAUSTED");
+        let model_path = if model_exhausted_marker.exists() {
+            model_target_dir.join(MODEL_ASSET.file_name)
+        } else {
+            match reassemble_with_retry(
+                &app, "model", &model_resource, &model_target_dir, &MODEL_ASSET,
+            ) {
+                Ok(path) => path,
+                Err(e) => {
+                    let reason = if matches!(e, ReassemblyError::ManifestMissing | ReassemblyError::ManifestCorrupt(_)) {
+                        format!("reinstall required: {e}")
+                    } else {
+                        e.to_string()
+                    };
+                    fail_setup(&app, "model", reason);
+                    return;
+                }
             }
         };
 

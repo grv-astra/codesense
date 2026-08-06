@@ -84,7 +84,10 @@ function RouteComponent() {
 
   // Trial mode (driven by the backend): caps scans, code and SBOM alike.
   const { data: trial } = useTrialStatus();
-  const trialBlocked = isTrialExhausted(trial);
+  // This form always creates a code scan regardless of the scan_type field
+  // (pre-existing: the "SBOM" option here never branches to an SBOM mutation
+  // -- see handleSubmit below), so the trial check is always the code type.
+  const trialBlocked = isTrialExhausted(trial, 'code');
 
   const [formData, setFormData] = useState<CreateGithubScans>({
     scan_name: '',
@@ -272,10 +275,10 @@ function RouteComponent() {
               <div className="text-[12px] text-gray-400">
                 {trial?.trial_mode ? (
                   <span className={trialBlocked ? 'text-red-600 dark:text-red-400 font-medium' : ''}>
-                    Trial: {trial.used}/{trial.limit} scans used
+                    Trial: {trial.code.used}/{trial.code.limit} code scans used
                     {trialBlocked
                       ? ' — limit reached. Contact us to upgrade.'
-                      : ` (${trial.remaining} left)`}
+                      : ` (${trial.code.remaining} left)`}
                   </span>
                 ) : (
                   'All fields are required.'

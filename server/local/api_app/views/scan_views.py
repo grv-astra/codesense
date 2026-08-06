@@ -114,10 +114,10 @@ class ScanCreateView(APIView):
     @require_permission("create_scan")
     # @require_assertion_jwt("scan", force_refresh=True)
     def post(self, request):
-        if not trial.can_start():
+        if not trial.can_start(trial.CODE):
             return JsonResponse(
-                {"detail": f"Trial limit reached — {trial.used()}/{trial.limit()} "
-                           f"scans used. Contact us to upgrade to the full version.",
+                {"detail": f"Trial limit reached — {trial.used(trial.CODE)}/{trial.limit()} "
+                           f"code scans used. Contact us to upgrade to the full version.",
                  "trial": trial.status()},
                 status=status.HTTP_403_FORBIDDEN,
             )
@@ -251,10 +251,10 @@ class GitHubRepoScanView(APIView):
     @require_permission("create_scan")
     # @require_assertion_jwt("scan", force_refresh=True)
     def post(self, request):
-        if not trial.can_start():
+        if not trial.can_start(trial.CODE):
             return Response(
-                {"detail": f"Trial limit reached — {trial.used()}/{trial.limit()} "
-                           f"scans used. Contact us to upgrade to the full version.",
+                {"detail": f"Trial limit reached — {trial.used(trial.CODE)}/{trial.limit()} "
+                           f"code scans used. Contact us to upgrade to the full version.",
                  "trial": trial.status()},
                 status=status.HTTP_403_FORBIDDEN,
             )
@@ -405,10 +405,10 @@ class ScanResumeView(APIView):
         # "interrupted" scan never released its slot (it's still counted via
         # trial.in_progress()), so gating it here would wrongly re-check a
         # slot it already owns and could block it from resuming itself.
-        if scan["status"] == "cancelled" and not trial.can_start():
+        if scan["status"] == "cancelled" and not trial.can_start(trial.CODE):
             return JsonResponse(
-                {"detail": f"Trial limit reached — {trial.used()}/{trial.limit()} "
-                           f"scans used. Contact us to upgrade to the full version.",
+                {"detail": f"Trial limit reached — {trial.used(trial.CODE)}/{trial.limit()} "
+                           f"code scans used. Contact us to upgrade to the full version.",
                  "trial": trial.status()},
                 status=status.HTTP_403_FORBIDDEN,
             )
@@ -505,10 +505,10 @@ class SbomCreateView(APIView):
     # @require_assertion_jwt("scan", force_refresh=True)
     def post(self, request):
 
-        if not trial.can_start():
+        if not trial.can_start(trial.SBOM):
             return JsonResponse(
-                {"detail": f"Trial limit reached — {trial.used()}/{trial.limit()} "
-                           f"scans used. Contact us to upgrade to the full version.",
+                {"detail": f"Trial limit reached — {trial.used(trial.SBOM)}/{trial.limit()} "
+                           f"SBOM scans used. Contact us to upgrade to the full version.",
                  "trial": trial.status()},
                 status=status.HTTP_403_FORBIDDEN,
             )
@@ -599,7 +599,7 @@ class SbomCreateView(APIView):
                     end_time=datetime.now(timezone.utc),
                 )
                 try:
-                    trial.record_completion()
+                    trial.record_completion(trial.SBOM)
                 except Exception as exc:  # trial accounting must never sink a scan
                     logging.warning(f"trial.record_completion failed: {exc}")
 
@@ -659,10 +659,10 @@ class GrypeCreateView(APIView):
     # @require_assertion_jwt("scan", force_refresh=True)
     def post(self, request):
 
-        if not trial.can_start():
+        if not trial.can_start(trial.SBOM):
             return JsonResponse(
-                {"detail": f"Trial limit reached — {trial.used()}/{trial.limit()} "
-                           f"scans used. Contact us to upgrade to the full version.",
+                {"detail": f"Trial limit reached — {trial.used(trial.SBOM)}/{trial.limit()} "
+                           f"SBOM scans used. Contact us to upgrade to the full version.",
                  "trial": trial.status()},
                 status=status.HTTP_403_FORBIDDEN,
             )
@@ -743,7 +743,7 @@ class GrypeCreateView(APIView):
                     end_time=datetime.now(timezone.utc),
                 )
                 try:
-                    trial.record_completion()
+                    trial.record_completion(trial.SBOM)
                 except Exception as exc:  # trial accounting must never sink a scan
                     logging.warning(f"trial.record_completion failed: {exc}")
 

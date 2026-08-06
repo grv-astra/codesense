@@ -90,10 +90,13 @@ class Finding(UUIDModel):
 
 
 class TrialUsage(UUIDModel):
-    """Single-row, monotonic counter of successfully-completed SAST scans, used to
-    enforce a trial limit. Deliberately separate from the (hard-deletable) Scan
-    rows so deleting a scan can't free a trial slot. Only ever incremented."""
-    scans_used = models.IntegerField(default=0)
+    """Single-row, monotonic counters of successfully-completed scans, used to
+    enforce a trial limit -- SEPARATE per scan type (code vs SBOM each get their
+    own allowance; using up one doesn't consume the other's). Deliberately
+    separate from the (hard-deletable) Scan/SbomScan rows so deleting a scan
+    can't free a trial slot. Only ever incremented."""
+    code_scans_used = models.IntegerField(default=0)
+    sbom_scans_used = models.IntegerField(default=0)
     updated_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
