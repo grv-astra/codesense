@@ -156,10 +156,18 @@ class NormalizeVerdictFieldsTests(SimpleTestCase):
     def test_normalize_sets_rule_id_and_verdict_defaults(self):
         f = _sample_finding()
         fd, _ = normalize(f, "s", "u")
-        self.assertEqual(fd["rule_id"], f.rule_id)
+        # Cleaned the same way as title -- last dotted segment of the raw
+        # check_id, not the full namespace-prefixed path.
+        self.assertEqual(fd["rule_id"], "tainted-sql-string")
         # defaults before fuse runs; fuse overwrites these for findings it judges
         self.assertIsNone(fd["confidence"])
         self.assertEqual(fd["verifier_reason"], "")
+
+    def test_normalize_rule_id_falls_back_to_raw_when_unparseable(self):
+        f = _sample_finding()
+        f.rule_id = ""
+        fd, _ = normalize(f, "s", "u")
+        self.assertEqual(fd["rule_id"], "")
 
     def test_new_fields_survive_the_persistence_filter(self):
         from local.api_app.models.finding_models import _FIELDS

@@ -267,10 +267,14 @@ def normalize(f: SemgrepFinding, scan_id: str, triggered_by: str) -> tuple[dict,
         "created_by": triggered_by,
         "lines": [f.start_line, f.end_line],
         "affected": f.rule_id,
-        # W7 — persisted verifier metadata. rule_id is the detector check_id;
-        # confidence/verifier_reason are placeholders here and get overwritten by
-        # fuse() for any finding the LLM verifier judges (fail-open leaves them).
-        "rule_id": f.rule_id,
+        # W7 — persisted verifier metadata. rule_id is the detector check_id,
+        # cleaned the same way as title (last dotted segment) -- the raw
+        # check_id is namespace-prefixed by its rule-pack path (and, for a
+        # local rules dir, the full install path on disk), which read as
+        # garbled noise in the UI. confidence/verifier_reason are placeholders
+        # here and get overwritten by fuse() for any finding the LLM verifier
+        # judges (fail-open leaves them).
+        "rule_id": _rule_name(f.rule_id) or f.rule_id,
         "confidence": None,
         "verifier_reason": "",
         # Flow-diagram widget data — the same source/steps/sink trace already

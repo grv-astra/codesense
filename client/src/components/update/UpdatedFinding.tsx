@@ -102,6 +102,17 @@ function Finding({ finding }: FindingProps) {
   const cweNum = cweNumber(currentFinding.cwe);
   const hasFlowDiagram = !!currentFinding.flow_diagram && currentFinding.flow_diagram.length > 0;
 
+  // Semgrep's rule_id is namespaced by its rule-pack path (e.g.
+  // "generic.dockerfile.security.missing-user.missing-user", or the full
+  // local install path when rules are loaded from disk) -- only the last
+  // dotted segment is the rule's own name. Applied at display time so
+  // findings persisted before the backend started cleaning this up (see
+  // finding_normalizer.py's _rule_name) still render correctly.
+  const ruleName = (ruleId?: string): string => {
+    const segs = (ruleId ?? '').split('.').filter(Boolean);
+    return segs.length ? segs[segs.length - 1] : (ruleId ?? '');
+  }
+
   // file_path carries a trailing " [start,end]" line-range suffix (see
   // finding_normalizer.normalize) — strip it to get the real path for
   // extension-based language detection.
@@ -312,7 +323,7 @@ function Finding({ finding }: FindingProps) {
                     )}
                     {currentFinding.rule_id && (
                       <code className="block text-primary bg-gray-300 dark:bg-gray-900/50 px-2 py-1 rounded text-xs mt-1 break-all">
-                        {currentFinding.rule_id}
+                        {ruleName(currentFinding.rule_id)}
                       </code>
                     )}
                   </div>

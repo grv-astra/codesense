@@ -33,6 +33,24 @@ describe('UpdatedFinding', () => {
     );
   });
 
+  test('renders rule_id as just its last dotted segment, not the full namespaced path', () => {
+    render(
+      <UpdatedFinding
+        finding={
+          {
+            ...base,
+            rule_id: 'generic.dockerfile.security.missing-user.missing-user',
+          } as any
+        }
+      />,
+    );
+
+    expect(screen.getByText('missing-user')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/generic\.dockerfile\.security/),
+    ).not.toBeInTheDocument();
+  });
+
   test('renders the data-flow diagram when steps are present', () => {
     render(
       <UpdatedFinding
