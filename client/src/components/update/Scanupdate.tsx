@@ -79,17 +79,31 @@ function ScanUpdate({ scan }: ScanUpdateProps) {
   };
  
   const phases = [
-    { name: 'Initializing Scan', start: 0, end: 5 },
-    { name: 'Scanning Files', start: 5, end: 80 },
-    { name: 'Analyzing Results', start: 80, end: 95 },
+    { name: 'Initializing Scan', start: 0, end: 15 },
+    { name: 'Scanning Files', start: 15, end: 20 },
+    { name: 'Verifying Findings', start: 20, end: 95 },
     { name: 'Generating Report', start: 95, end: 100 }
   ];
- 
+
+  // Detection (Semgrep) runs as one atomic pass with no per-file progress, so
+  // 0-20% just reflects "has the initial file/AST scan happened yet". The
+  // bulk of scan time is the per-finding LLM verification loop, which DOES
+  // report live progress (metrics.findings_progress, see lsast_scanner.py) --
+  // that drives 20-95%. Deliberately does NOT use files_scanned/total_files
+  // for this: those are real file counts, static after the initial AST pass,
+  // and were previously (buggily) overloaded with a findings count to fake
+  // this same live movement -- see the total_files/scanned mismatch fix.
   const calculatePercentage = (scan: ScanDetails): number => {
     if (scan.status === 'completed') return 100;
     if (scan.status === 'failed' || scan.status === 'cancelled') return 0;
-    if (scan.total_files === 0) return 0;
-    return Math.min((scan.files_scanned / scan.total_files) * 100, 99);
+
+    const fp = scan.metrics?.findings_progress;
+    if (fp && fp.total > 0) {
+      const verifyFraction = Math.min(fp.processed / fp.total, 1);
+      return Math.min(20 + verifyFraction * 75, 99);
+    }
+    if (fp && fp.total === 0) return 95; // detection found nothing to verify
+    return scan.total_files > 0 ? 15 : 0; // detection pass not done yet
   };
  
   const getCurrentPhase = (percentage: number, status: string): string => {

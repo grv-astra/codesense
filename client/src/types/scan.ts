@@ -1,7 +1,12 @@
+interface FindingsProgress {
+    total: number,
+    processed: number,
+}
 interface FolderMetrics {
     total_loc: number,
     total_functions: number,
-    languages: string[]
+    languages: string[],
+    findings_progress?: FindingsProgress,
 }
 export interface SeverityCounts {
   critical: number;

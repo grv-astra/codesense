@@ -123,9 +123,17 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str,
     if len(sem_findings) != raw_count:
         logger.info("LSAST: de-duplicated %d -> %d findings", raw_count, len(sem_findings))
 
+    # Captured BEFORE resume-skip filtering: this is the scan's true total,
+    # not just what's left to do in this run. Used to seed findings_progress
+    # below so a resumed scan's progress bar continues from where it left
+    # off instead of jumping backward to look like it restarted.
+    findings_total = len(sem_findings)
+    already_done = 0
+
     if skip_fingerprints:
         before = len(sem_findings)
         sem_findings = [sf for sf in sem_findings if fingerprint(sf) not in skip_fingerprints]
+        already_done = before - len(sem_findings)
         logger.info("LSAST: resume filtered %d -> %d findings (already processed)",
                     before, len(sem_findings))
         if not sem_findings:
@@ -147,8 +155,11 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str,
 
     visible: list[dict] = []
     filtered: list[dict] = []
+    findings_processed = already_done
 
     def _persist(outcome):
+        nonlocal findings_processed
+        findings_processed += 1
         if outcome is not None:
             if outcome.action == "suppress":
                 filtered.append(outcome.finding)
@@ -161,18 +172,23 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str,
                     logger.warning("LSAST: incremental persist failed: %s", exc)
         # Runs for every attempted finding (errored/suppressed/visible alike) so
         # the live findings count reflects real work done, not just visible
-        # findings. Deliberately does NOT pass scanned=/total= here: those map
-        # to the scan's total_files/files_scanned columns (real file counts set
-        # by the AST-analysis step), and len(sem_findings) is a findings count,
-        # not a file count -- passing it here used to silently overwrite
-        # total_files with the findings total mid-scan (and it would stick
-        # after completion too, since nothing resets it), making "Total Files"
-        # and "Scanned" on the updates page show two unrelated numbers.
+        # findings. Live verification progress goes into metrics.findings_progress
+        # (merged via extra_metrics, same mechanism as the llm-availability
+        # signal below) rather than scanned=/total=: those map to the scan's
+        # total_files/files_scanned columns (real file counts set by the
+        # AST-analysis step), and a findings count is not a file count --
+        # passing it there used to silently overwrite total_files with the
+        # findings total mid-scan, making "Total Files" and "Scanned" on the
+        # updates page show two unrelated numbers.
         # This now runs once per finding (was once per scan pre-refactor), so a
         # transient failure here (e.g. a SQLite write-lock from a concurrent
         # cancel-view write) must not be allowed to kill the whole scan.
         try:
-            update_progress(scan_id, findings=len(visible))
+            update_progress(
+                scan_id,
+                findings=len(visible),
+                extra_metrics={"findings_progress": {"total": findings_total, "processed": findings_processed}},
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("LSAST: progress update failed: %s", exc)
 

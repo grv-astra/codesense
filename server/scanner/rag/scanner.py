@@ -9,6 +9,19 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _persisted_findings_count(scan_id) -> int:
+    """The scan's TRUE findings total, read from the database rather than an
+    in-memory list. A resumed scan's `visible` list only holds findings from
+    THAT invocation -- findings verified+persisted before the interruption
+    were saved incrementally (save_findings_to_db) but live in a separate
+    process call, so counting `visible` after a resume silently undercounts.
+    The database is the only thing with the full picture across a resume
+    boundary.
+    """
+    from local.api_app.models.orm import Finding
+    return Finding.objects.filter(scan_id=scan_id, deleted=False).count()
+
+
 def scan_folder(folder_path, scan_id, triggered_by, scan_name,
                  skip_fingerprints=frozenset(), cancel_event=None):
     """Run a vulnerability scan via the LSAST engine (the only engine).
@@ -82,7 +95,7 @@ def scan_folder(folder_path, scan_id, triggered_by, scan_name,
         # happened, contradicting status="cancelled".
         update_progress(
             scan_id=scan_id,
-            findings=len(visible),
+            findings=_persisted_findings_count(scan_id),
             status="cancelled",
             end_time=datetime.now(timezone.utc),
         )
@@ -92,7 +105,7 @@ def scan_folder(folder_path, scan_id, triggered_by, scan_name,
 
     update_progress(
         scan_id=scan_id,
-        findings=len(visible),
+        findings=_persisted_findings_count(scan_id),
         scanned=total_files,   # no per-file progress; on completion all files are done
         total=total_files,     # re-assert the real file count in case anything else wrote here
         status="completed",

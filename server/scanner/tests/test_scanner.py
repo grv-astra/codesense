@@ -1,13 +1,21 @@
+from datetime import datetime, timezone
 from unittest import mock
 
-from django.test import SimpleTestCase
+from django.test import TestCase
 
 import scanner.rag.scanner as scanner_module
 from scanner.rag.semgrep_detector import SemgrepDetectionError
+from local.api_app.models.orm import Finding
 
 
-class ScanFolderTests(SimpleTestCase):
-    """scan_folder is the LSAST entrypoint (the only engine) + scan lifecycle."""
+class ScanFolderTests(TestCase):
+    """scan_folder is the LSAST entrypoint (the only engine) + scan lifecycle.
+
+    Uses a real (test) database, not SimpleTestCase -- the completion/
+    cancellation findings count is read from actual Finding rows now (see
+    _persisted_findings_count), not an in-memory list, so these tests need
+    real DB access to exercise that path.
+    """
 
     @mock.patch("licenses.services.trial.record_completion")
     @mock.patch.object(scanner_module, "lsast_scan_folder",
@@ -17,6 +25,7 @@ class ScanFolderTests(SimpleTestCase):
                        return_value={"total_loc": 10, "total_functions": 2, "languages": ["python"],
                                      "total_files": 5})
     def test_runs_lsast_and_marks_scan_completed(self, mock_ast, mock_update, mock_lsast, mock_trial):
+        Finding.objects.create(scan_id="s1", created_at=datetime.now(timezone.utc))
         result = scanner_module.scan_folder("/x", "s1", "user-1", "Scan #1")
         # returns the visible findings from the LSAST pipeline
         self.assertEqual(result, ["finding"])
@@ -26,7 +35,7 @@ class ScanFolderTests(SimpleTestCase):
             "/x", "s1", "user-1",
             skip_fingerprints=frozenset(), cancel_event=None,
         )
-        # a completed-status update happened with the visible findings count
+        # a completed-status update happened with the persisted findings count
         completed = [c for c in mock_update.call_args_list if c.kwargs.get("status") == "completed"]
         self.assertEqual(len(completed), 1)
         self.assertEqual(completed[0].kwargs.get("findings"), 1)
@@ -38,6 +47,34 @@ class ScanFolderTests(SimpleTestCase):
         self.assertEqual(completed[0].kwargs.get("scanned"), 5)
         # a successful completion consumes a trial slot (no-op when trial mode is off)
         mock_trial.assert_called_once()
+
+    @mock.patch("licenses.services.trial.record_completion")
+    @mock.patch.object(scanner_module, "lsast_scan_folder", return_value=(["new-finding"], []))
+    @mock.patch.object(scanner_module, "update_progress")
+    @mock.patch.object(scanner_module, "analyze_folder",
+                       return_value={"total_loc": 10, "total_functions": 2, "languages": ["python"],
+                                     "total_files": 5})
+    def test_completed_findings_count_survives_a_resume(self, mock_ast, mock_update, mock_lsast, mock_trial):
+        # Regression for the resume undercount bug: findings= used to be
+        # len(visible), which only reflects THIS invocation -- on a resumed
+        # scan, findings verified+persisted before the interruption live in a
+        # separate prior process call and were silently dropped from the
+        # final count. Simulated here: 2 Finding rows already exist for this
+        # scan (as if persisted by an interrupted earlier attempt), and
+        # lsast_scan_folder (mocked) represents the resumed run's own
+        # (already-persisted-by-the-real-pipeline) work.
+        now = datetime.now(timezone.utc)
+        Finding.objects.create(scan_id="s1", created_at=now)
+        Finding.objects.create(scan_id="s1", created_at=now)
+        Finding.objects.create(scan_id="s1", created_at=now)  # this run's own finding
+
+        scanner_module.scan_folder(
+            "/x", "s1", "user-1", "Scan #1",
+            skip_fingerprints=frozenset({"fp-a", "fp-b"}),
+        )
+        completed = [c for c in mock_update.call_args_list if c.kwargs.get("status") == "completed"]
+        # Must be 3 (the real DB total), not 1 (len(["new-finding"])).
+        self.assertEqual(completed[0].kwargs.get("findings"), 3)
 
     @mock.patch("licenses.services.trial.record_completion")
     @mock.patch.object(scanner_module, "lsast_scan_folder")

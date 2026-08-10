@@ -89,6 +89,30 @@ class LsastScanFolderTests(SimpleTestCase):
         # one visible finding overall, reported live as work completes
         self.assertIn(1, findings_calls)
 
+    @mock.patch("scanner.rag.lsast_scanner.update_progress")
+    @mock.patch("scanner.rag.lsast_scanner.save_findings_to_db")
+    @mock.patch("scanner.rag.lsast_scanner.verify")
+    @mock.patch("scanner.rag.lsast_scanner.run_semgrep")
+    def test_per_finding_progress_reports_findings_verification_progress(
+            self, mock_run, mock_verify, mock_save, mock_progress):
+        # The updates-page progress bar needs a live signal for the slow
+        # verification phase that isn't the buggy file-count overload this
+        # replaced -- extra_metrics.findings_progress carries {total,
+        # processed} so the frontend can compute real incremental progress.
+        mock_run.return_value = [_sqli_finding(), _safe_orm_finding()]
+        mock_verify.side_effect = [
+            VerifierVerdict("TP", "unsanitized concat", 0.9),
+            VerifierVerdict("FP", "Django ORM parameterizes", 0.95),
+        ]
+        lsast_scan_folder(folder_path="/tmp/code", scan_id="s1", triggered_by="user-1")
+        progress_calls = [c.kwargs["extra_metrics"]["findings_progress"]
+                          for c in mock_progress.call_args_list
+                          if "findings_progress" in c.kwargs.get("extra_metrics", {})]
+        self.assertEqual(progress_calls, [
+            {"total": 2, "processed": 1},
+            {"total": 2, "processed": 2},
+        ])
+
     @mock.patch("scanner.rag.lsast_scanner.save_findings_to_db")
     @mock.patch("scanner.rag.lsast_scanner.verify")
     @mock.patch("scanner.rag.lsast_scanner.run_semgrep")
@@ -187,6 +211,35 @@ class LsastScanFolderTests(SimpleTestCase):
         mock_verify.assert_called_once()
         self.assertEqual(len(visible), 1)
         self.assertEqual(visible[0]["fingerprint"], fingerprint(pending))
+
+    @mock.patch("scanner.rag.lsast_scanner.update_progress")
+    @mock.patch("scanner.rag.lsast_scanner.save_findings_to_db")
+    @mock.patch("scanner.rag.lsast_scanner.verify")
+    @mock.patch("scanner.rag.lsast_scanner.run_semgrep")
+    def test_resumed_findings_progress_continues_instead_of_restarting(
+            self, mock_run, mock_verify, mock_save, mock_progress):
+        # Regression: findings_total/processed used to be computed AFTER
+        # resume-skip filtering, so a resumed scan's progress bar would jump
+        # backward (e.g. from "7/10 done" to "0/3 remaining") instead of
+        # continuing from where it left off. total must reflect the TRUE
+        # original count, and processed must start from how many were
+        # already done, not zero.
+        from scanner.rag.resume import fingerprint
+        done = _sqli_finding()        # already processed in the interrupted run
+        pending = _safe_orm_finding()  # the one remaining finding
+        mock_run.return_value = [done, pending]
+        mock_verify.return_value = VerifierVerdict("TP", "x", 0.8)
+
+        lsast_scan_folder(
+            "/tmp/code", "s1", "user-1",
+            skip_fingerprints=frozenset({fingerprint(done)}),
+        )
+        progress_calls = [c.kwargs["extra_metrics"]["findings_progress"]
+                          for c in mock_progress.call_args_list
+                          if "findings_progress" in c.kwargs.get("extra_metrics", {})]
+        # total=2 (the real original total, not just the 1 remaining);
+        # processed starts at 1 (already done) and ends at 2, never restarting at 0.
+        self.assertEqual(progress_calls, [{"total": 2, "processed": 2}])
 
     @mock.patch("scanner.rag.lsast_scanner.save_findings_to_db")
     @mock.patch("scanner.rag.lsast_scanner.verify")
