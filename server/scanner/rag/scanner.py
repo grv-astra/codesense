@@ -1,6 +1,7 @@
 from .progress import update_progress
 from .ast_parser import analyze_folder
 from .lsast_scanner import lsast_scan_folder
+from .semgrep_detector import SemgrepDetectionError
 from datetime import datetime, timezone
 import traceback
 import logging
@@ -52,10 +53,24 @@ def scan_folder(folder_path, scan_id, triggered_by, scan_name,
     # STEP 2 — LSAST DETECTION + VERIFICATION
     # ----------------------------------------------------------
     update_progress(scan_id=scan_id, status="in_progress")
-    visible, _filtered = lsast_scan_folder(
-        folder_path, scan_id, triggered_by,
-        skip_fingerprints=skip_fingerprints, cancel_event=cancel_event,
-    )
+    try:
+        visible, _filtered = lsast_scan_folder(
+            folder_path, scan_id, triggered_by,
+            skip_fingerprints=skip_fingerprints, cancel_event=cancel_event,
+        )
+    except SemgrepDetectionError as e:
+        # The detector never actually produced a result (timeout or missing
+        # binary) -- this must not look like a clean "0 findings" scan. The
+        # extracted source is retained, same as the AST-failure path above, so
+        # resuming just retries detection.
+        logger.error("LSAST detection failed: %s", e)
+        update_progress(
+            scan_id=scan_id,
+            error=str(e),
+            status="interrupted",
+            end_time=datetime.now(timezone.utc),
+        )
+        return []
 
     # ----------------------------------------------------------
     # STEP 3 — SCAN COMPLETE (or cancelled mid-way)

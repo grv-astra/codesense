@@ -79,6 +79,13 @@ _DEFAULT_REGISTRY_PACKS = ["p/security-audit", "p/owasp-top-ten", "p/secrets"]
 _TIMEOUT_SECONDS = 300
 
 
+class SemgrepDetectionError(RuntimeError):
+    """Semgrep/OpenGrep never produced a result (timed out or the binary is
+    missing). Distinct from "ran and found nothing" -- callers must surface
+    this as a scan failure, not silently persist zero findings.
+    """
+
+
 def _extract_cwe(metadata: dict[str, Any]) -> str:
     """The explicit CWE from rule metadata (handles str / int / list / 'CWE-89: ...')."""
     cwes = metadata.get("cwe")
@@ -351,9 +358,14 @@ def run_semgrep(folder_path: str) -> list[SemgrepFinding]:
             cmd, capture_output=True, text=True, timeout=_TIMEOUT_SECONDS,
             check=False, env=env,
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        logger.warning("Semgrep invocation failed: %s", exc)
-        return []
+    except subprocess.TimeoutExpired as exc:
+        logger.error("Semgrep timed out after %ds: %s", _TIMEOUT_SECONDS, exc)
+        raise SemgrepDetectionError(
+            f"Semgrep/OpenGrep did not finish within {_TIMEOUT_SECONDS}s"
+        ) from exc
+    except FileNotFoundError as exc:
+        logger.error("Semgrep binary not found: %s", exc)
+        raise SemgrepDetectionError(f"Semgrep/OpenGrep binary not found: {exc}") from exc
 
     if result.returncode >= 2:
         logger.warning("Semgrep failed (rc=%d): %s", result.returncode, result.stderr[:500])

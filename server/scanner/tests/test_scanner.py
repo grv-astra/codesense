@@ -3,6 +3,7 @@ from unittest import mock
 from django.test import SimpleTestCase
 
 import scanner.rag.scanner as scanner_module
+from scanner.rag.semgrep_detector import SemgrepDetectionError
 
 
 class ScanFolderTests(SimpleTestCase):
@@ -73,6 +74,30 @@ class ScanFolderTests(SimpleTestCase):
         # failed). Either way, STEP 3's trial.record_completion() is unreached.
         with self.assertRaisesMessage(RuntimeError, "lsast boom"):
             scanner_module.scan_folder("/x", "s1", "user-1", "Scan #1")
+        mock_trial.assert_not_called()
+
+    @mock.patch("licenses.services.trial.record_completion")
+    @mock.patch.object(scanner_module, "lsast_scan_folder",
+                       side_effect=SemgrepDetectionError("Semgrep/OpenGrep did not finish within 300s"))
+    @mock.patch.object(scanner_module, "update_progress")
+    @mock.patch.object(scanner_module, "analyze_folder",
+                       return_value={"total_loc": 10, "total_functions": 2, "languages": ["python"],
+                                     "total_files": 5})
+    def test_detector_timeout_marks_interrupted_not_completed(self, mock_ast, mock_update, mock_lsast, mock_trial):
+        # Regression: unlike a generic LSAST failure (which propagates
+        # uncaught, see test_lsast_failure_propagates_...), a detector timeout
+        # is caught here specifically so the scan row never lands on
+        # status="completed" with a phantom 0-findings result -- that looked
+        # identical to a genuinely clean scan.
+        result = scanner_module.scan_folder("/x", "s1", "user-1", "Scan #1")
+        self.assertEqual(result, [])
+        status_calls = [c.kwargs.get("status") for c in mock_update.call_args_list
+                        if c.kwargs.get("status")]
+        self.assertIn("interrupted", status_calls)
+        self.assertNotIn("completed", status_calls)
+        error_calls = [c for c in mock_update.call_args_list if c.kwargs.get("error")]
+        self.assertTrue(error_calls)
+        self.assertIn("did not finish within 300s", error_calls[0].kwargs.get("error"))
         mock_trial.assert_not_called()
 
     def test_no_legacy_engine_remains(self):

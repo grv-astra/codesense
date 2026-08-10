@@ -4,9 +4,11 @@ from unittest import mock
 
 from django.test import SimpleTestCase
 
+import subprocess
+
 from scanner.rag.semgrep_detector import (
     run_semgrep, parse_semgrep_json, derive_cwe, _extract_taint_trace, _read_code_lines,
-    _read_code_lines_with_context)
+    _read_code_lines_with_context, SemgrepDetectionError)
 from scanner.rag.lsast_types import SemgrepFinding
 
 
@@ -95,6 +97,26 @@ class RunSemgrepTests(SimpleTestCase):
         mock_run.return_value = mock.Mock(returncode=1, stdout=FIXTURE.read_text(), stderr="")
         findings = run_semgrep("/some/code/path")
         self.assertEqual(len(findings), 1)
+
+    @mock.patch("scanner.rag.semgrep_detector.get_semgrep_rules_dir", return_value="/rules")
+    @mock.patch("scanner.rag.semgrep_detector.get_semgrep_bin", return_value="/bin/semgrep")
+    @mock.patch("scanner.rag.semgrep_detector.subprocess.run")
+    def test_raises_on_timeout_instead_of_silently_returning_empty(self, mock_run, _bin, _rules):
+        # Regression: a timed-out Semgrep invocation used to be swallowed and
+        # return [] -- indistinguishable from a genuinely clean scan. A large
+        # codebase blowing the subprocess timeout must surface as a failure,
+        # not silently report zero findings.
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="semgrep", timeout=300)
+        with self.assertRaises(SemgrepDetectionError):
+            run_semgrep("/code")
+
+    @mock.patch("scanner.rag.semgrep_detector.get_semgrep_rules_dir", return_value="/rules")
+    @mock.patch("scanner.rag.semgrep_detector.get_semgrep_bin", return_value="/bin/semgrep")
+    @mock.patch("scanner.rag.semgrep_detector.subprocess.run")
+    def test_raises_when_semgrep_binary_missing(self, mock_run, _bin, _rules):
+        mock_run.side_effect = FileNotFoundError("no such file")
+        with self.assertRaises(SemgrepDetectionError):
+            run_semgrep("/code")
 
     @mock.patch("scanner.rag.semgrep_detector.get_privacy_rules_dir", return_value="/privacy-rules")
     @mock.patch("scanner.rag.semgrep_detector.get_semgrep_rules_dir", return_value="/rules")
