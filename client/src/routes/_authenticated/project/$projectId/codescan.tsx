@@ -127,11 +127,18 @@ function RouteComponent() {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `${scan.scan_name}_findings.xlsx`;
+      const filename = `${scan.scan_name}_findings.xlsx`;
+      link.download = filename;
       document.body.appendChild(link);
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
+      // The packaged desktop app has no browser download bar to confirm this
+      // silently succeeded (unlike a regular browser tab), so this toast is
+      // the only feedback the user gets that the file actually saved.
+      toast("Download complete", {
+        description: `${filename} saved to your Downloads folder.`,
+      });
     } catch (error) {
       toast("Download failed", {
         description: "Could not export findings. Please try again.",

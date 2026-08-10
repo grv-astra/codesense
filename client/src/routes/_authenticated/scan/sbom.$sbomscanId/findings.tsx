@@ -222,7 +222,7 @@ function FindingsComponent() {
       <GenericTable
         data={findings}
         columns={findingColumns}
-        title="Findings"
+        title="Vulnerabilities"
         loading={isLoading}
         error={error?.message}
         pagination={{
@@ -234,7 +234,7 @@ function FindingsComponent() {
         totalItems={totalFindings}
         currentPage={currentPage}
         onPageChange={setCurrentPage}
-        emptyMessage="No findings found"
+        emptyMessage="No vulnerabilities found"
         rowClassName={() =>
           `hover:bg-gray-50 hover:dark:bg-gray-300/10 cursor-pointer`
         }
