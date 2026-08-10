@@ -17,7 +17,7 @@ const queryClient = new QueryClient({
 
 function RootComponent() {
   const assetSetup = useAssetSetup();
-  const activation = useActivation();
+  const activation = useActivation(assetSetup.status === 'ready');
 
   let body: React.ReactNode;
   if (assetSetup.status !== 'ready') {
