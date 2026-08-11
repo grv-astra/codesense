@@ -274,6 +274,18 @@ class GitHubRepoScanView(APIView):
         branch = request.data.get("branch", "main")
         scan_name = request.data.get("scan_name", f"{repo}-{branch}")
         project_id = request.data.get("project_id")
+
+        if not all([token, username, repo, project_id]):
+            return Response(
+                {"error": "token, username, repo, project_id are required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Runs only once project_id is confirmed present (non-None, non-empty)
+        # by the check above -- avoids _service_identity_forbidden's `!=`
+        # comparison ever seeing project_id=None on this call site (unlike
+        # ScanCreateView, where the serializer already guarantees a non-empty
+        # string before the check runs).
         if _service_identity_forbidden(request, project_id):
             return Response(
                 {"error": "API key is not authorized for this project"},
@@ -282,12 +294,6 @@ class GitHubRepoScanView(APIView):
         triggered_by = request.data.get("triggered_by")
         if not triggered_by and hasattr(request, "user") and isinstance(request.user, dict):
             triggered_by = request.user.get("id")
- 
-        if not all([token, username, repo, project_id]):
-            return Response(
-                {"error": "token, username, repo, project_id are required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
 
         # DB log
         scan = ScanModel.create({
