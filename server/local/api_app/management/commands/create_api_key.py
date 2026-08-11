@@ -1,6 +1,7 @@
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 from local.api_app.models.apikey_model import ApiKeyModel
+from local.api_app.models.project_models import ProjectModel
 
 
 class Command(BaseCommand):
@@ -11,6 +12,9 @@ class Command(BaseCommand):
         parser.add_argument("--name", required=True, help="Human label for the key, e.g. 'azure-devops-prod'")
 
     def handle(self, *args, **options):
+        if not ProjectModel.find_by_id(options["project"]):
+            raise CommandError(f"Project {options['project']} not found")
+
         row, plaintext = ApiKeyModel.create(
             project_id=options["project"],
             name=options["name"],
