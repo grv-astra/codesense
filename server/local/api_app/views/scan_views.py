@@ -109,6 +109,11 @@ def _run_lsast_pipeline(scan_id, source_path, triggered_by, scan_name,
         close_old_connections()
 
 
+def _service_identity_forbidden(request, project_id: str) -> bool:
+    user = request.user if isinstance(request.user, dict) else {}
+    return user.get("role") == "service" and user.get("project_id") != project_id
+
+
 @method_decorator(csrf_exempt, name='dispatch')
 class ScanCreateView(APIView):
     @require_permission("create_scan")
@@ -128,6 +133,11 @@ class ScanCreateView(APIView):
         if serializer.is_valid():
             scan_name = serializer.validated_data['scan_name']
             project_id = serializer.validated_data['project_id']
+            if _service_identity_forbidden(request, project_id):
+                return JsonResponse(
+                    {"error": "API key is not authorized for this project"},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
             zip_file = serializer.validated_data['zip_file']
  
             # Create scan doc
@@ -264,6 +274,11 @@ class GitHubRepoScanView(APIView):
         branch = request.data.get("branch", "main")
         scan_name = request.data.get("scan_name", f"{repo}-{branch}")
         project_id = request.data.get("project_id")
+        if _service_identity_forbidden(request, project_id):
+            return Response(
+                {"error": "API key is not authorized for this project"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         triggered_by = request.data.get("triggered_by")
         if not triggered_by and hasattr(request, "user") and isinstance(request.user, dict):
             triggered_by = request.user.get("id")
