@@ -161,7 +161,8 @@ class SbomLicenseFinding(UUIDModel):
 class APIKey(UUIDModel):
     project_id = models.CharField(max_length=32, db_index=True)
     name = models.CharField(max_length=255)
-    key_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    # Stores a SHA-256 hash of the API key, never the raw/plaintext key itself.
+    key_hash = models.CharField(max_length=64, unique=True)
     key_prefix = models.CharField(max_length=16)
     created_by = models.CharField(max_length=32, blank=True, default="")
     created_at = models.DateTimeField()

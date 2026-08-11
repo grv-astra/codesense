@@ -17,7 +17,7 @@ class Migration(migrations.Migration):
                 ('id', models.CharField(default=common.orm.new_uuid_hex, editable=False, max_length=32, primary_key=True, serialize=False)),
                 ('project_id', models.CharField(db_index=True, max_length=32)),
                 ('name', models.CharField(max_length=255)),
-                ('key_hash', models.CharField(db_index=True, max_length=64, unique=True)),
+                ('key_hash', models.CharField(max_length=64, unique=True)),
                 ('key_prefix', models.CharField(max_length=16)),
                 ('created_by', models.CharField(blank=True, default='', max_length=32)),
                 ('created_at', models.DateTimeField()),
