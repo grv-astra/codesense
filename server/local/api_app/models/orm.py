@@ -156,3 +156,18 @@ class SbomLicenseFinding(UUIDModel):
     class Meta:
         app_label = "api_app"
         db_table = "sbom_licenses_findings"
+
+
+class APIKey(UUIDModel):
+    project_id = models.CharField(max_length=32, db_index=True)
+    name = models.CharField(max_length=255)
+    key_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    key_prefix = models.CharField(max_length=16)
+    created_by = models.CharField(max_length=32, blank=True, default="")
+    created_at = models.DateTimeField()
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        app_label = "api_app"
+        db_table = "api_keys"
