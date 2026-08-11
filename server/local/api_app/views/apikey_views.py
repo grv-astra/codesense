@@ -4,6 +4,7 @@ from rest_framework import status
 
 from local.auth_app.permissions.decorators import require_permission
 from local.api_app.models.apikey_model import ApiKeyModel
+from local.api_app.models.project_models import ProjectModel
 
 
 def _serialize(row) -> dict:
@@ -20,11 +21,17 @@ def _serialize(row) -> dict:
 class ApiKeyListCreateView(APIView):
     @require_permission("update_project")
     def get(self, request, project_id):
+        if not ProjectModel.find_by_id(project_id):
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
         rows = ApiKeyModel.list_by_project(project_id)
         return Response([_serialize(r) for r in rows], status=status.HTTP_200_OK)
 
     @require_permission("update_project")
     def post(self, request, project_id):
+        if not ProjectModel.find_by_id(project_id):
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
         name = (request.data.get("name") or "").strip()
         if not name:
             return Response({"error": "name is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -39,6 +46,9 @@ class ApiKeyListCreateView(APIView):
 class ApiKeyRevokeView(APIView):
     @require_permission("update_project")
     def post(self, request, project_id, key_id):
+        if not ProjectModel.find_by_id(project_id):
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
         row = ApiKeyModel.revoke(key_id, project_id)
         if not row:
             return Response({"error": "API key not found"}, status=status.HTTP_404_NOT_FOUND)
