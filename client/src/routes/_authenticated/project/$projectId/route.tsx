@@ -23,6 +23,7 @@ function RouteComponent() {
     const pathname = location.pathname;
     if (pathname.includes('/sbomscan')) return 'sbomscan';
     if (pathname.includes('/codescan')) return 'codescan';
+    if (pathname.includes('/settings')) return 'settings';
     // Default to codescan if no specific tab is in URL
     return 'codescan';
   };
@@ -61,6 +62,7 @@ function RouteComponent() {
                 <SelectContent>
                   <SelectItem value="codescan">Code Scan</SelectItem>
                   <SelectItem value="sbomscan">SBOM Scan</SelectItem>
+                  <SelectItem value="settings">Settings</SelectItem>
                 </SelectContent>
               </Select>
           </div>
