@@ -11,6 +11,9 @@ class IsApiKeyTests(TestCase):
     def test_rejects_jwt_shaped_token(self):
         self.assertFalse(is_api_key("eyJhbGciOiJIUzI1NiJ9.payload.sig"))
 
+    def test_rejects_none(self):
+        self.assertFalse(is_api_key(None))
+
 
 class ResolveApiKeyTests(TestCase):
     def test_resolves_valid_key_to_service_identity(self):
@@ -33,3 +36,6 @@ class ResolveApiKeyTests(TestCase):
         row, plaintext = ApiKeyModel.create(project_id="proj9", name="ci", created_by="admin1")
         ApiKeyModel.revoke(row.id, "proj9")
         self.assertIsNone(resolve_api_key(plaintext))
+
+    def test_returns_none_for_none_token(self):
+        self.assertIsNone(resolve_api_key(None))
