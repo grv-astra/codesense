@@ -543,6 +543,11 @@ class SbomCreateView(APIView):
 
         scan_name = serializer.validated_data["scan_name"]
         project_id = serializer.validated_data["project_id"]
+        if _service_identity_forbidden(request, project_id):
+            return JsonResponse(
+                {"error": "API key is not authorized for this project"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         zip_file = serializer.validated_data["zip_file"]
 
         scan_data = {
@@ -697,6 +702,11 @@ class GrypeCreateView(APIView):
 
         scan_name = serializer.validated_data["scan_name"]
         project_id = serializer.validated_data["project_id"]
+        if _service_identity_forbidden(request, project_id):
+            return JsonResponse(
+                {"error": "API key is not authorized for this project"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         sbom_file = serializer.validated_data["sbom_file"]
 
         # 🔴 Basic validation

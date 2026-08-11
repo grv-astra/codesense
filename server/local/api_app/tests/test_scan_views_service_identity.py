@@ -6,7 +6,9 @@ from django.test import TestCase
 from local.api_app.tests.test_scan_views import _json_request, _multipart_request
 from local.api_app.views.scan_views import (
     GitHubRepoScanView,
+    GrypeCreateView,
     ScanCreateView,
+    SbomCreateView,
     _service_identity_forbidden,
 )
 
@@ -66,4 +68,46 @@ class GitHubRepoScanServiceIdentityIntegrationTests(TestCase):
         )
         request.user = {"id": "apikey:1", "role": "service", "project_id": "proj-B"}
         response = GitHubRepoScanView.post.__wrapped__(GitHubRepoScanView(), request)
+        self.assertEqual(response.status_code, 403)
+
+
+class SbomCreateServiceIdentityIntegrationTests(TestCase):
+    """SbomCreateView shares the create_scan permission gate with ScanCreateView
+    but is a separate call site -- it must independently enforce that a
+    service (API-key) identity bound to one project cannot start an SBOM scan
+    against a different project."""
+
+    def test_wrong_project_service_identity_gets_403(self):
+        request = _multipart_request(
+            "/api/scans/sbom/create/",
+            {
+                "scan_name": "test",
+                "project_id": "proj-A",
+                "zip_file": SimpleUploadedFile(
+                    "x.zip", b"PK\x05\x06" + b"\x00" * 18, content_type="application/zip"
+                ),
+            },
+        )
+        request.user = {"id": "apikey:1", "role": "service", "project_id": "proj-B"}
+        response = SbomCreateView.post.__wrapped__(SbomCreateView(), request)
+        self.assertEqual(response.status_code, 403)
+
+
+class GrypeCreateServiceIdentityIntegrationTests(TestCase):
+    """GrypeCreateView shares the create_scan permission gate too -- same
+    project-scoping invariant must hold for the Grype/SBOM-file scan path."""
+
+    def test_wrong_project_service_identity_gets_403(self):
+        request = _multipart_request(
+            "/api/scans/grype/create/",
+            {
+                "scan_name": "test",
+                "project_id": "proj-A",
+                "sbom_file": SimpleUploadedFile(
+                    "x.json", b"{}", content_type="application/json"
+                ),
+            },
+        )
+        request.user = {"id": "apikey:1", "role": "service", "project_id": "proj-B"}
+        response = GrypeCreateView.post.__wrapped__(GrypeCreateView(), request)
         self.assertEqual(response.status_code, 403)
