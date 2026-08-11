@@ -64,7 +64,7 @@ describe('ApiKeysPanel', () => {
     fireEvent.change(screen.getByLabelText(/key name/i), { target: { value: 'new-key' } });
     fireEvent.click(screen.getByRole('button', { name: /^generate$/i }));
 
-    expect(await screen.findByText('csk_zz99fullsecretvalue')).toBeInTheDocument();
+    expect(await screen.findByDisplayValue('csk_zz99fullsecretvalue')).toBeInTheDocument();
     expect(apiKeyService.createApiKey).toHaveBeenCalledWith('proj1', { name: 'new-key' });
   });
 

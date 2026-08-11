@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/atomic/button';
 import { Input } from '@/components/atomic/input';
@@ -24,15 +24,30 @@ function GenerateKeyDialog({
   const [name, setName] = useState('');
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const activeRef = useRef(open);
+
+  useEffect(() => {
+    activeRef.current = open;
+  }, [open]);
 
   const handleSubmit = async () => {
     if (!name.trim()) return;
     setSubmitting(true);
     try {
       const key = await onCreate(name.trim());
-      setRevealedKey(key);
+      if (activeRef.current) {
+        setRevealedKey(key);
+      }
+    } catch {
+      if (activeRef.current) {
+        toast('Failed to generate key', {
+          description: 'Could not create the API key. Please try again.',
+        });
+      }
     } finally {
-      setSubmitting(false);
+      if (activeRef.current) {
+        setSubmitting(false);
+      }
     }
   };
 
@@ -75,12 +90,20 @@ function GenerateKeyDialog({
                 Copy this key now — you won't be able to see it again.
               </DialogDescription>
             </DialogHeader>
-            <code className="block break-all rounded bg-muted p-2 text-sm">{revealedKey}</code>
+            <input
+              readOnly
+              value={revealedKey}
+              onFocus={(e) => e.currentTarget.select()}
+              className="block w-full break-all rounded bg-muted p-2 text-sm font-mono"
+              aria-label="Generated API key"
+            />
             <DialogFooter>
               <Button
                 onClick={() => {
-                  navigator.clipboard.writeText(revealedKey);
-                  toast('Copied to clipboard');
+                  navigator.clipboard.writeText(revealedKey).then(
+                    () => toast('Copied to clipboard'),
+                    () => toast('Could not copy', { description: 'Select and copy the key manually.' })
+                  );
                 }}
               >
                 Copy
@@ -138,7 +161,7 @@ export function ApiKeysPanel({ projectId }: { projectId: string }) {
               <th>Created</th>
               <th>Last used</th>
               <th>Status</th>
-              <th></th>
+              <th className="sr-only">Actions</th>
             </tr>
           </thead>
           <tbody>
