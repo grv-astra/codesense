@@ -45,9 +45,7 @@ function GenerateKeyDialog({
         });
       }
     } finally {
-      if (activeRef.current) {
-        setSubmitting(false);
-      }
+      setSubmitting(false);
     }
   };
 

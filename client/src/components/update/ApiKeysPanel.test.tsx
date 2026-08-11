@@ -92,4 +92,48 @@ describe('ApiKeysPanel', () => {
     fireEvent.click(await screen.findByRole('button', { name: /revoke/i }));
     await waitFor(() => expect(apiKeyService.revokeApiKey).toHaveBeenCalledWith('proj1', 'k1'));
   });
+
+  test('closing the dialog while creating does not leave the Generate button stuck disabled', async () => {
+    vi.mocked(apiKeyService.listApiKeys).mockResolvedValue([]);
+    let resolveCreate: (key: string) => void = () => {};
+    vi.mocked(apiKeyService.createApiKey).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = (key: string) =>
+            resolve({
+              id: 'k3',
+              name: 'in-flight-key',
+              key_prefix: 'csk_ff33',
+              created_at: '2026-08-11T00:00:00Z',
+              last_used_at: null,
+              revoked_at: null,
+              key,
+            });
+        })
+    );
+    renderWithClient(<ApiKeysPanel projectId="proj1" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /generate new key/i }));
+    fireEvent.change(screen.getByLabelText(/key name/i), { target: { value: 'in-flight-key' } });
+    fireEvent.click(screen.getByRole('button', { name: /^generate$/i }));
+
+    // Wait for the create request to actually be in flight (React Query invokes
+    // the mutation function asynchronously) before closing the dialog.
+    await waitFor(() => expect(apiKeyService.createApiKey).toHaveBeenCalled());
+
+    // Close the dialog while the create request is still in flight.
+    fireEvent.click(screen.getByRole('button', { name: /close/i }));
+    expect(screen.queryByRole('button', { name: /^generate$/i })).not.toBeInTheDocument();
+
+    // Let the request resolve now that the dialog is closed.
+    resolveCreate('csk_ff33fullsecretvalue');
+
+    // Reopen the dialog and provide a name so disabled-ness reflects only `submitting`.
+    fireEvent.click(await screen.findByRole('button', { name: /generate new key/i }));
+    fireEvent.change(screen.getByLabelText(/key name/i), { target: { value: 'second-attempt' } });
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^generate$/i })).not.toBeDisabled()
+    );
+  });
 });
