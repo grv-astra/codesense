@@ -12,6 +12,7 @@ import {
   DialogFooter,
 } from '@/components/atomic/dialog';
 import { useApiKeys, useCreateApiKey, useRevokeApiKey } from '@/hooks/use-api-keys';
+import { copyToClipboard } from '@/lib/utils';
 
 function GenerateKeyDialog({
   open,
@@ -98,11 +99,13 @@ function GenerateKeyDialog({
             />
             <DialogFooter>
               <Button
-                onClick={() => {
-                  navigator.clipboard.writeText(revealedKey).then(
-                    () => toast('Copied to clipboard'),
-                    () => toast('Could not copy', { description: 'Select and copy the key manually.' })
-                  );
+                onClick={async () => {
+                  const ok = await copyToClipboard(revealedKey);
+                  if (ok) {
+                    toast('Copied to clipboard');
+                  } else {
+                    toast('Could not copy', { description: 'Select and copy the key manually.' });
+                  }
                 }}
               >
                 Copy
