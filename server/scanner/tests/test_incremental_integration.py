@@ -84,6 +84,44 @@ class IncrementalScanIntegrationTests(TestCase):
         self.assertTrue(any(f.file_path.startswith("added.py") for f in second_findings))
         self.assertFalse(any(f.file_path.startswith("to_be_removed.py") for f in second_findings))
 
+    def test_multi_hop_provenance_survives_three_consecutive_scans(self):
+        vulnerable_sql = (
+            "from sqlalchemy import text\n"
+            "def run(conn, user_input):\n"
+            "    return conn.execute(text('SELECT * FROM t WHERE id=' + user_input))\n"
+        )
+        self._write("stable.py", vulnerable_sql)
+
+        self._create_scan_row("scan-hop-1", "first")
+        scan_folder(
+            folder_path=self.tmp, scan_id="scan-hop-1", triggered_by="u",
+            scan_name="first", project_id=self.project_id,
+        )
+        first_findings = list(Finding.objects.filter(scan_id="scan-hop-1", deleted=False))
+        self.assertTrue(any(f.file_path.startswith("stable.py") for f in first_findings))
+
+        self._create_scan_row("scan-hop-2", "second")
+        scan_folder(
+            folder_path=self.tmp, scan_id="scan-hop-2", triggered_by="u",
+            scan_name="second", project_id=self.project_id,
+        )
+        second_finding = next(
+            f for f in Finding.objects.filter(scan_id="scan-hop-2", deleted=False)
+            if f.file_path.startswith("stable.py")
+        )
+        self.assertEqual(second_finding.first_seen_scan_id, "scan-hop-1")
+
+        self._create_scan_row("scan-hop-3", "third")
+        scan_folder(
+            folder_path=self.tmp, scan_id="scan-hop-3", triggered_by="u",
+            scan_name="third", project_id=self.project_id,
+        )
+        third_finding = next(
+            f for f in Finding.objects.filter(scan_id="scan-hop-3", deleted=False)
+            if f.file_path.startswith("stable.py")
+        )
+        self.assertEqual(third_finding.first_seen_scan_id, "scan-hop-1")
+
     def test_ruleset_version_change_forces_full_rescan(self):
         from unittest.mock import patch
 
