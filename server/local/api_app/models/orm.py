@@ -40,6 +40,8 @@ class Scan(UUIDModel):
     metrics = models.JSONField(default=_scan_metrics_default)
     source_path = models.CharField(max_length=1024, blank=True, default="")
     cancel_requested = models.BooleanField(default=False)
+    file_manifest = models.JSONField(default=dict, blank=True)
+    ruleset_version = models.CharField(max_length=64, blank=True, default="")
 
     class Meta:
         app_label = "api_app"

@@ -56,3 +56,30 @@ class ScanModelTests(TestCase):
             result["severity_counts"],
             {"critical": 0, "high": 0, "medium": 0, "low": 0},
         )
+
+    def test_scan_stores_file_manifest_and_ruleset_version(self):
+        from local.api_app.models.orm import Scan
+        from datetime import datetime, timezone
+
+        scan = Scan.objects.create(
+            project_id="proj1",
+            scan_name="S",
+            status="completed",
+            created_at=datetime.now(timezone.utc),
+            file_manifest={"src/app.py": "a" * 64},
+            ruleset_version="rules-hash-1",
+        )
+        reloaded = Scan.objects.get(id=scan.id)
+        self.assertEqual(reloaded.file_manifest, {"src/app.py": "a" * 64})
+        self.assertEqual(reloaded.ruleset_version, "rules-hash-1")
+
+    def test_scan_file_manifest_defaults_to_empty_dict(self):
+        from local.api_app.models.orm import Scan
+        from datetime import datetime, timezone
+
+        scan = Scan.objects.create(
+            project_id="proj1", scan_name="S", status="queued",
+            created_at=datetime.now(timezone.utc),
+        )
+        self.assertEqual(scan.file_manifest, {})
+        self.assertEqual(scan.ruleset_version, "")
