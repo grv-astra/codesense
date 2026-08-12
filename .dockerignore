@@ -1,0 +1,14 @@
+**/.git
+**/node_modules
+**/.venv
+client/src-tauri/target
+client/src-tauri/resources
+dist/tools
+dist/scratch
+dist/semgrep-rules
+dist/semgrep-rules.zip
+.claude
+docs
+metrics
+scripts
+*.log

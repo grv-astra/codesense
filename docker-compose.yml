@@ -1,0 +1,43 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    environment:
+      CODESENSE_DATA_DIR: /data
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-*}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-}
+      COSIGN_KEY_DIR: /data/keys
+      GRYPE_DB_CACHE_DIR: /data/grype-db
+      # VLLM_BASE_URL intentionally unset -- LLM verifier/enrichment fail
+      # open (findings still work, no AI verification/enrichment). Add it
+      # once an LLM host is wired up.
+    volumes:
+      - codesense_data:/data
+    expose:
+      - "8585"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: client/Dockerfile
+      args:
+        VITE_BACKEND_URL: ""
+    expose:
+      - "3000"
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+
+volumes:
+  codesense_data:
