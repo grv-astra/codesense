@@ -5,8 +5,20 @@ import axios, { type AxiosInstance, type AxiosResponse, AxiosError } from 'axios
 // (the old value) resolved to "tauri.localhost" and broke every request.
 // Overridable at build/runtime via VITE_BACKEND_URL.
 const port = 8585;
+const envBackendUrl = import.meta.env.VITE_BACKEND_URL as string | undefined;
+// VITE_BACKEND_URL="" (same-origin deployments, e.g. behind nginx) must NOT
+// resolve to the empty string here: axios treats a falsy baseURL as "skip
+// path-joining" and hands request paths straight to the browser as relative
+// URLs, which then resolve against whatever page is currently open instead
+// of the site root -- e.g. from /project/list, a service call to
+// "api/projects/" (every service file omits the leading slash, safe only
+// with an absolute baseURL) would resolve to /project/list/api/projects/.
+// Resolving to window.location.origin keeps BACKEND_URL a real absolute URL,
+// so axios's own combineURLs() does the joining correctly regardless.
 export const BACKEND_URL =
-  (import.meta.env.VITE_BACKEND_URL as string | undefined) ?? `http://127.0.0.1:${port}`;
+  envBackendUrl !== undefined
+    ? envBackendUrl || (typeof window !== 'undefined' ? window.location.origin : '')
+    : `http://127.0.0.1:${port}`;
 
 // Base API Client with common functionality
 export class BaseApiClient {
