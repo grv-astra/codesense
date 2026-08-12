@@ -99,3 +99,73 @@ class FindingModelTests(TestCase):
             "first_seen_scan_id": "scan1",
         }])
         self.assertEqual(result[0]["first_seen_scan_id"], "scan1")
+
+    def test_copy_forward_copies_matching_unchanged_findings_with_new_scan_id(self):
+        from local.api_app.models.finding_models import FindingModel
+        from local.api_app.models.orm import Finding
+        from datetime import datetime, timezone
+
+        Finding.objects.create(
+            scan_id="baseline-scan", file_path="src/app.py [1,2]", cwe="CWE-89",
+            created_at=datetime.now(timezone.utc), first_seen_scan_id="baseline-scan",
+        )
+        Finding.objects.create(
+            scan_id="baseline-scan", file_path="src/other.py [5,6]", cwe="CWE-79",
+            created_at=datetime.now(timezone.utc), first_seen_scan_id="baseline-scan",
+        )
+
+        count = FindingModel.copy_forward("baseline-scan", "new-scan", {"src/app.py"})
+
+        self.assertEqual(count, 1)
+        copied = Finding.objects.filter(scan_id="new-scan")
+        self.assertEqual(copied.count(), 1)
+        self.assertEqual(copied.first().file_path, "src/app.py [1,2]")
+        self.assertEqual(copied.first().cwe, "CWE-89")
+        self.assertNotEqual(copied.first().id, Finding.objects.get(scan_id="baseline-scan", cwe="CWE-89").id)
+
+    def test_copy_forward_preserves_original_first_seen_scan_id(self):
+        from local.api_app.models.finding_models import FindingModel
+        from local.api_app.models.orm import Finding
+        from datetime import datetime, timezone
+
+        Finding.objects.create(
+            scan_id="scan-2", file_path="src/app.py [1,2]", cwe="CWE-89",
+            created_at=datetime.now(timezone.utc), first_seen_scan_id="scan-1",
+        )
+
+        FindingModel.copy_forward("scan-2", "scan-3", {"src/app.py"})
+
+        copied = Finding.objects.get(scan_id="scan-3")
+        self.assertEqual(copied.first_seen_scan_id, "scan-1")
+
+    def test_copy_forward_falls_back_to_baseline_id_when_first_seen_missing(self):
+        from local.api_app.models.finding_models import FindingModel
+        from local.api_app.models.orm import Finding
+        from datetime import datetime, timezone
+
+        Finding.objects.create(
+            scan_id="scan-old", file_path="src/app.py [1,2]", cwe="CWE-89",
+            created_at=datetime.now(timezone.utc), first_seen_scan_id="",
+        )
+
+        FindingModel.copy_forward("scan-old", "scan-new", {"src/app.py"})
+
+        copied = Finding.objects.get(scan_id="scan-new")
+        self.assertEqual(copied.first_seen_scan_id, "scan-old")
+
+    def test_copy_forward_skips_deleted_findings(self):
+        from local.api_app.models.finding_models import FindingModel
+        from local.api_app.models.orm import Finding
+        from datetime import datetime, timezone
+
+        Finding.objects.create(
+            scan_id="scan-x", file_path="src/app.py [1,2]", cwe="CWE-89",
+            created_at=datetime.now(timezone.utc), deleted=True,
+        )
+
+        count = FindingModel.copy_forward("scan-x", "scan-y", {"src/app.py"})
+        self.assertEqual(count, 0)
+
+    def test_copy_forward_returns_zero_for_empty_unchanged_set(self):
+        from local.api_app.models.finding_models import FindingModel
+        self.assertEqual(FindingModel.copy_forward("any-scan", "other-scan", set()), 0)

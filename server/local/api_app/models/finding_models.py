@@ -125,3 +125,31 @@ class FindingModel:
         finding.approved = not finding.approved
         finding.save(update_fields=["approved"])
         return {"id": finding_id, "approved": finding.approved}
+
+    @classmethod
+    def copy_forward(cls, baseline_scan_id: str, new_scan_id: str, unchanged_paths: set[str]):
+        """Bulk-copy findings from baseline_scan_id into new_scan_id for files in
+        unchanged_paths (bare relative paths, no line-range suffix). Preserves each
+        finding's original first_seen_scan_id across the copy; falls back to
+        baseline_scan_id if it was never set (pre-existing findings from before this
+        field existed). Returns the number of findings copied."""
+        if not unchanged_paths:
+            return 0
+
+        source_rows = Finding.objects.filter(scan_id=baseline_scan_id, deleted=False)
+        to_create = []
+        for row in source_rows:
+            idx = row.file_path.rfind(" [")
+            bare_path = row.file_path[:idx] if idx != -1 else row.file_path
+            if bare_path not in unchanged_paths:
+                continue
+            data = {k: getattr(row, k) for k in _FIELDS if k != "scan_id"}
+            data["scan_id"] = new_scan_id
+            data["created_at"] = datetime.now(timezone.utc)
+            data["first_seen_scan_id"] = row.first_seen_scan_id or baseline_scan_id
+            to_create.append(Finding(**data))
+
+        if not to_create:
+            return 0
+        Finding.objects.bulk_create(to_create)
+        return len(to_create)
