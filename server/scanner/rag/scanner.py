@@ -34,6 +34,14 @@ def _copy_forward_unchanged(baseline_scan_id: str, new_scan_id: str, unchanged_p
     return FindingModel.copy_forward(baseline_scan_id, new_scan_id, unchanged_paths)
 
 
+def _scan_already_has_findings(scan_id: str) -> bool:
+    """True if scan_id already has any persisted findings -- a reliable signal this
+    scan_id is being resumed after copy-forward (or detection) already ran once,
+    since copy-forward is always the first DB-writing step in this pipeline."""
+    from local.api_app.models.orm import Finding  # match _copy_forward_unchanged's import style
+    return Finding.objects.filter(scan_id=scan_id).exists()
+
+
 def scan_folder(folder_path, scan_id, triggered_by, scan_name,
                  skip_fingerprints=frozenset(), cancel_event=None, project_id=None):
     """Run a vulnerability scan via the LSAST engine (the only engine).
@@ -101,7 +109,7 @@ def scan_folder(folder_path, scan_id, triggered_by, scan_name,
         if baseline is not None:
             changed_or_new, unchanged, _removed = diff_manifests(baseline.file_manifest, new_manifest)
             only_files = sorted(changed_or_new)
-            if unchanged:
+            if unchanged and not _scan_already_has_findings(scan_id):
                 _copy_forward_unchanged(baseline.id, scan_id, unchanged)
 
         visible, _filtered = lsast_scan_folder(

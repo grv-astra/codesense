@@ -245,3 +245,47 @@ class ScanFolderTests(TestCase):
         self.assertEqual(len(completed), 1)
         self.assertEqual(completed[0].kwargs.get("ruleset_version"), "rules-v1")
         self.assertIn("file_manifest", completed[0].kwargs)
+
+    def test_scan_folder_does_not_duplicate_copy_forward_on_resume(self):
+        # Regression: scan_folder used to run the incremental copy-forward
+        # step unconditionally on every invocation, with no awareness that a
+        # RESUME (ScanResumeView re-invoking the pipeline for the same
+        # scan_id) had already copied findings forward in an earlier attempt
+        # -- FindingModel.copy_forward does a blind bulk_create, so a resume
+        # duplicated every carried-forward finding. Copy-forward is the first
+        # DB-writing step in the pipeline, so any existing Finding row for
+        # this scan_id is a reliable signal it already ran.
+        project_id = "proj-resume-dedupe-test"
+        baseline = Scan.objects.create(
+            project_id=project_id, scan_name="baseline", status="completed",
+            created_at=datetime.now(timezone.utc),
+            file_manifest={"unchanged.py": "hash-unchanged"},
+            ruleset_version="rules-v1",
+        )
+        Finding.objects.create(
+            scan_id=baseline.id, file_path="unchanged.py [1,2]", cwe="CWE-89",
+            created_at=datetime.now(timezone.utc), first_seen_scan_id=baseline.id,
+        )
+
+        with mock.patch.object(scanner_module, "compute_ruleset_version", return_value="rules-v1"), \
+             mock.patch.object(scanner_module, "compute_file_manifest",
+                                return_value={"unchanged.py": "hash-unchanged"}), \
+             mock.patch.object(scanner_module, "lsast_scan_folder", return_value=([], [])), \
+             mock.patch.object(scanner_module, "analyze_folder", return_value={}), \
+             mock.patch("licenses.services.trial.record_completion"):
+
+            # First attempt (simulates the original, later-interrupted run).
+            scanner_module.scan_folder(
+                folder_path="/fake/root", scan_id="resumed-scan", triggered_by="u",
+                scan_name="s", project_id=project_id,
+            )
+            first_count = Finding.objects.filter(scan_id="resumed-scan").count()
+            self.assertEqual(first_count, 1)
+
+            # Resume: scan_folder() called again for the SAME scan_id.
+            scanner_module.scan_folder(
+                folder_path="/fake/root", scan_id="resumed-scan", triggered_by="u",
+                scan_name="s", project_id=project_id,
+            )
+            second_count = Finding.objects.filter(scan_id="resumed-scan").count()
+            self.assertEqual(second_count, 1, "copy-forward must not duplicate findings on resume")
