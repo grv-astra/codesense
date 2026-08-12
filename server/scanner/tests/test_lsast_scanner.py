@@ -257,6 +257,36 @@ class LsastScanFolderTests(SimpleTestCase):
         mock_verify.assert_not_called()
         mock_save.assert_not_called()
 
+    @mock.patch("scanner.rag.lsast_scanner.run_semgrep")
+    def test_only_files_restricts_run_semgrep_to_explicit_absolute_paths(self, mock_run_semgrep):
+        mock_run_semgrep.return_value = []
+        lsast_scan_folder(
+            folder_path="/fake/scan/root",
+            scan_id="s1",
+            triggered_by="u",
+            only_files=["src/app.py", "src/util.py"],
+        )
+        called_target = mock_run_semgrep.call_args[0][0]
+        self.assertEqual(called_target, [
+            os.path.join("/fake/scan/root", "src/app.py"),
+            os.path.join("/fake/scan/root", "src/util.py"),
+        ])
+
+    @mock.patch("scanner.rag.lsast_scanner.run_semgrep")
+    def test_only_files_empty_list_skips_run_semgrep_entirely(self, mock_run_semgrep):
+        visible, filtered = lsast_scan_folder(
+            folder_path="/fake/scan/root", scan_id="s1", triggered_by="u", only_files=[],
+        )
+        mock_run_semgrep.assert_not_called()
+        self.assertEqual(visible, [])
+        self.assertEqual(filtered, [])
+
+    @mock.patch("scanner.rag.lsast_scanner.run_semgrep")
+    def test_only_files_none_scans_whole_folder_unchanged(self, mock_run_semgrep):
+        mock_run_semgrep.return_value = []
+        lsast_scan_folder(folder_path="/fake/scan/root", scan_id="s1", triggered_by="u")
+        mock_run_semgrep.assert_called_once_with("/fake/scan/root")
+
 
 class LanguageRoutingTests(SimpleTestCase):
     def setUp(self):

@@ -103,6 +103,7 @@ def _process_one(sf, scan_id: str, triggered_by: str, llm_ok: bool = True, scan_
 def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str,
                        skip_fingerprints: frozenset[str] = frozenset(),
                        cancel_event=None,
+                       only_files: list[str] | None = None,
                       ) -> tuple[list[dict], list[dict]]:
     """Run the full LSAST pipeline. Returns (visible, filtered).
 
@@ -110,8 +111,18 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str,
     prior (crashed/cancelled) attempt at this same scan -- see resume.py.
     ``cancel_event``, when set, is checked between findings so a user-requested
     cancel stops the batch promptly instead of running it to completion.
+    ``only_files``, when not ``None``, restricts the Semgrep pass to this
+    explicit list of paths (relative to ``folder_path``) instead of scanning
+    the whole folder -- an empty list short-circuits with no Semgrep call at
+    all. ``None`` (the default) preserves the legacy whole-folder scan.
     """
-    sem_findings = run_semgrep(folder_path)
+    if only_files is not None:
+        if not only_files:
+            return [], []
+        targets = [os.path.join(folder_path, rel_path) for rel_path in only_files]
+        sem_findings = run_semgrep(targets)
+    else:
+        sem_findings = run_semgrep(folder_path)
     if not sem_findings:
         logger.info("LSAST: Semgrep produced no findings for %s", folder_path)
         return [], []
