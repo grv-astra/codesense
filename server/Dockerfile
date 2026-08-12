@@ -23,14 +23,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       curl ca-certificates unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# grype (Anchore) -- SBOM vulnerability scanning.
+# syft, grype, grant (all Anchore) -- SBOM generation, vulnerability
+# scanning, and license checking respectively. sbom_pipeline.py shells out
+# to all three by bare name (tool_path()), not just grype.
+RUN curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+      | sh -s -- -b /usr/local/bin
 RUN curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
       | sh -s -- -b /usr/local/bin
+RUN curl -sSfL https://raw.githubusercontent.com/anchore/grant/main/install.sh \
+      | sh -s -- -b /usr/local/bin
 
-# cosign (sigstore) -- SBOM signing. Matches the --use-signing-config=false
-# fix in scanner/services/sbom_pipeline.py (targets cosign v3.x's new default;
-# any v2.4+/v3.x build works with that flag).
-ARG COSIGN_VERSION=v2.4.1
+# cosign (sigstore) -- SBOM signing. sbom_pipeline.py unconditionally passes
+# --use-signing-config=false, a flag that only exists on cosign v3.x+ (it
+# errors "unknown flag" on v2.4.x) -- must pin a v3.x release, not v2.4.x.
+ARG COSIGN_VERSION=v3.0.6
 RUN curl -sSfL -o /usr/local/bin/cosign \
       "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64" \
     && chmod +x /usr/local/bin/cosign

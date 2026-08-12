@@ -8,10 +8,23 @@ services:
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-*}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-}
       COSIGN_KEY_DIR: /data/keys
-      GRYPE_DB_CACHE_DIR: /data/grype-db
+      # Fixed passphrase for the offline SBOM-signing key pair -- without it,
+      # `cosign generate-key-pair`/`sign-blob` prompt interactively for a
+      # password to encrypt/decrypt the private key, which has no TTY to
+      # read from in a container and fails ("inappropriate ioctl for
+      # device"). Matches the constant the desktop Tauri build already uses
+      # (client/src-tauri/src/main.rs, COSIGN_PASSWORD) for the same reason.
+      COSIGN_PASSWORD: "codesense-offline-sbom-signing"
+      # GRYPE_DB_CACHE_DIR intentionally NOT overridden here -- the bundled
+      # vulnerability DB is baked into the image at /app/vendor/grype-db
+      # (server/Dockerfile), which is where GRYPE_DB_CACHE_DIR already
+      # points by default. Overriding it to a path under /data would point
+      # grype at the empty runtime volume instead of the actual bundled DB.
       # VLLM_BASE_URL intentionally unset -- LLM verifier/enrichment fail
       # open (findings still work, no AI verification/enrichment). Add it
       # once an LLM host is wired up.
+      TRIAL_MODE: "true"
+      TRIAL_SCAN_LIMIT: "2"
     volumes:
       - codesense_data:/data
     expose:
