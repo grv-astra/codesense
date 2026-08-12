@@ -320,7 +320,7 @@ def parse_semgrep_json(raw: str) -> list[SemgrepFinding]:
     return findings
 
 
-def run_semgrep(folder_path: str) -> list[SemgrepFinding]:
+def run_semgrep(target: str | list[str]) -> list[SemgrepFinding]:
     bin_path = get_semgrep_bin()
     rules_dir = get_semgrep_rules_dir()
 
@@ -339,7 +339,14 @@ def run_semgrep(folder_path: str) -> list[SemgrepFinding]:
     # No "--metrics off": the bundled engine is OpenGrep, which has no telemetry
     # and rejects that flag (rc=2). Upstream Semgrep (dev/eval) telemetry is
     # disabled via SEMGREP_SEND_METRICS in the env below instead.
-    cmd += ["--json", "--quiet", "--disable-version-check", folder_path]
+    cmd += ["--json", "--quiet", "--disable-version-check"]
+    # `target` is either a single directory/file path (today's behavior) or an
+    # explicit list of file paths (incremental scan) -- OpenGrep's CLI TARGETS
+    # argument accepts either interchangeably.
+    if isinstance(target, (list, tuple)):
+        cmd += list(target)
+    else:
+        cmd += [target]
 
     # Force a UTF-8 environment. The frozen OpenGrep/Semgrep reads rule YAMLs
     # using the process locale; a non-UTF-8 host locale makes it fall back to

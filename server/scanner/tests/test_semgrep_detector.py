@@ -1,4 +1,6 @@
 import json
+import os
+import unittest
 from pathlib import Path
 from unittest import mock
 
@@ -13,6 +15,8 @@ from scanner.rag.lsast_types import SemgrepFinding
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "semgrep" / "sample_sqli.json"
+
+_HAVE_ENGINE = bool(os.getenv("SEMGREP_BIN")) and bool(os.getenv("SEMGREP_RULES_DIR"))
 
 
 class ParseSemgrepJsonTests(SimpleTestCase):
@@ -326,3 +330,48 @@ class RunSemgrepContextWideningTests(SimpleTestCase):
         self.assertIn("row7", f.context_code)
         self.assertGreater(f.context_start_line, 0)
         self.assertLess(f.context_start_line, 5)             # starts before the matched line
+
+
+@unittest.skipUnless(_HAVE_ENGINE, "set SEMGREP_BIN + SEMGREP_RULES_DIR to run this test")
+class RunSemgrepFileListTargetTests(unittest.TestCase):
+    def test_accepts_a_list_of_explicit_file_paths(self):
+        from scanner.rag.semgrep_detector import run_semgrep
+
+        fixture_dir = os.path.join(os.path.dirname(__file__), "fixtures", "characterization")
+        app_py = os.path.join(fixture_dir, "app.py")
+
+        findings = run_semgrep([app_py])
+
+        self.assertTrue(any(f.file_path == app_py for f in findings))
+
+    def test_single_string_target_still_works_unchanged(self):
+        # Proves the string-target branch (as opposed to the new list-target
+        # branch above) still works post-refactor. Uses a small standalone
+        # custom rule instead of the full bundled SEMGREP_RULES_DIR ruleset --
+        # this is testing target-type plumbing, not detection accuracy, so it
+        # doesn't need production-scale rule compilation (which takes ~2-3
+        # minutes, same as the full-ruleset scan in test_characterization.py).
+        from scanner.rag.semgrep_detector import run_semgrep
+
+        import shutil, tempfile
+        tmp = tempfile.mkdtemp(prefix="codesense_semgrep_str_target_test_")
+        rules_dir = tempfile.mkdtemp(prefix="codesense_semgrep_str_target_rules_")
+        try:
+            with open(os.path.join(tmp, "vuln.py"), "w") as f:
+                f.write("import os\nos.system(user_input)\n")
+            with open(os.path.join(rules_dir, "cmd-injection.yaml"), "w") as f:
+                f.write(
+                    "rules:\n"
+                    "  - id: test-os-system-call\n"
+                    "    languages: [python]\n"
+                    "    severity: ERROR\n"
+                    "    message: test rule\n"
+                    "    patterns:\n"
+                    "      - pattern: os.system(...)\n"
+                )
+            with mock.patch.dict(os.environ, {"SEMGREP_RULES_DIR": rules_dir}):
+                findings = run_semgrep(tmp)
+            self.assertTrue(any(f.rule_id and "test-os-system-call" in f.rule_id for f in findings))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+            shutil.rmtree(rules_dir, ignore_errors=True)
