@@ -5,7 +5,7 @@ from django.test import TestCase
 
 import scanner.rag.scanner as scanner_module
 from scanner.rag.semgrep_detector import SemgrepDetectionError
-from local.api_app.models.orm import Finding
+from local.api_app.models.orm import Finding, Scan
 
 
 class ScanFolderTests(TestCase):
@@ -33,7 +33,7 @@ class ScanFolderTests(TestCase):
         mock_ast.assert_called_once_with("/x")
         mock_lsast.assert_called_once_with(
             "/x", "s1", "user-1",
-            skip_fingerprints=frozenset(), cancel_event=None,
+            skip_fingerprints=frozenset(), cancel_event=None, only_files=None,
         )
         # a completed-status update happened with the persisted findings count
         completed = [c for c in mock_update.call_args_list if c.kwargs.get("status") == "completed"]
@@ -186,3 +186,62 @@ class ScanFolderTests(TestCase):
         scanner_module.scan_folder(folder_path="/tmp/code", scan_id="s1", triggered_by="u1", scan_name="n",
                                     skip_fingerprints=skip)
         self.assertEqual(mock_lsast.call_args.kwargs["skip_fingerprints"], skip)
+
+    @mock.patch("licenses.services.trial.record_completion")
+    @mock.patch.object(scanner_module, "_copy_forward_unchanged", return_value=0)
+    @mock.patch.object(scanner_module, "analyze_folder", return_value={})
+    @mock.patch.object(scanner_module, "lsast_scan_folder", return_value=([], []))
+    @mock.patch.object(scanner_module, "compute_file_manifest",
+                       return_value={"unchanged.py": "hash-unchanged"})
+    @mock.patch.object(scanner_module, "compute_ruleset_version", return_value="rules-v1")
+    def test_scan_folder_uses_incremental_path_when_baseline_exists(
+        self, _mock_ruleset, _mock_manifest, mock_lsast, _mock_ast, mock_copy_forward, _mock_trial,
+    ):
+        # A completed baseline scan for this project, on the same ruleset
+        # version, whose manifest matches compute_file_manifest's mocked
+        # return value exactly -- so diff_manifests sees zero changed/new
+        # files and everything as unchanged.
+        project_id = "proj-incr-test"
+        baseline = Scan.objects.create(
+            project_id=project_id, scan_name="baseline", status="completed",
+            created_at=datetime.now(timezone.utc),
+            file_manifest={"unchanged.py": "hash-unchanged"},
+            ruleset_version="rules-v1",
+        )
+
+        scanner_module.scan_folder(
+            folder_path="/fake/root", scan_id="new-scan", triggered_by="u",
+            scan_name="s", project_id=project_id,
+        )
+
+        # No changed/new files -> only_files is an empty list (not None), so
+        # lsast_scan_folder short-circuits detection entirely for this scan.
+        _args, kwargs = mock_lsast.call_args
+        self.assertEqual(kwargs.get("only_files"), [])
+        # The one unchanged file is copied forward from the baseline scan.
+        mock_copy_forward.assert_called_once_with(baseline.id, "new-scan", {"unchanged.py"})
+
+    @mock.patch("licenses.services.trial.record_completion")
+    @mock.patch.object(scanner_module, "update_progress")
+    @mock.patch.object(scanner_module, "analyze_folder", return_value={})
+    @mock.patch.object(scanner_module, "lsast_scan_folder", return_value=([], []))
+    @mock.patch.object(scanner_module, "compute_ruleset_version", return_value="rules-v1")
+    def test_scan_folder_falls_back_to_full_scan_with_no_baseline(
+        self, _mock_ruleset, mock_lsast, _mock_ast, mock_update, _mock_trial,
+    ):
+        # No prior completed scan exists for this project -- find_baseline_scan
+        # (real, unmocked) returns None, so this must behave exactly like the
+        # pre-incremental-scan full-folder path: only_files=None.
+        scanner_module.scan_folder(
+            folder_path="/fake/root", scan_id="first-scan", triggered_by="u",
+            scan_name="s", project_id="proj-no-baseline-yet",
+        )
+
+        _args, kwargs = mock_lsast.call_args
+        self.assertIsNone(kwargs.get("only_files"))
+        # The first scan still ends up with a persisted manifest/ruleset
+        # version on completion, so ITS next scan has a usable baseline.
+        completed = [c for c in mock_update.call_args_list if c.kwargs.get("status") == "completed"]
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(completed[0].kwargs.get("ruleset_version"), "rules-v1")
+        self.assertIn("file_manifest", completed[0].kwargs)

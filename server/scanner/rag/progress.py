@@ -4,12 +4,16 @@ from local.api_app.models.orm import Scan
 
 def update_progress(scan_id, scanned=None, total=None, status=None,
                     end_time=None, findings=None, error=None, metrics=None,
-                    extra_metrics=None):
+                    extra_metrics=None, file_manifest=None, ruleset_version=None):
     """Update scan progress + AST metrics on the SQLite Scan row.
 
     ``extra_metrics`` merges keys into the existing metrics JSON (read-modify-
     write) rather than replacing it — used to attach live signals like LLM
     availability without clobbering the AST metrics.
+
+    ``file_manifest``/``ruleset_version`` persist the incremental-scan baseline
+    (see scanner/rag/incremental.py) on successful completion so the next scan
+    of this project can diff against it.
     """
     fields = {"last_updated": datetime.now(timezone.utc)}
     if scanned is not None:
@@ -26,6 +30,10 @@ def update_progress(scan_id, scanned=None, total=None, status=None,
         fields["error"] = error
     if metrics is not None:
         fields["metrics"] = metrics
+    if file_manifest is not None:
+        fields["file_manifest"] = file_manifest
+    if ruleset_version is not None:
+        fields["ruleset_version"] = ruleset_version
     if extra_metrics:
         scan = Scan.objects.filter(id=scan_id).first()
         if scan:

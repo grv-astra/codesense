@@ -66,7 +66,8 @@ class ScanModel:
 
     @classmethod
     def update_progress(cls, scan_id: str, **kwargs):
-        allowed = ["total_files", "files_scanned", "findings", "end_time", "status"]
+        allowed = ["total_files", "files_scanned", "findings", "end_time", "status",
+                   "file_manifest", "ruleset_version"]
         fields = {k: kwargs[k] for k in allowed if k in kwargs}
         if fields:
             Scan.objects.filter(id=scan_id).update(**fields)

@@ -1,6 +1,7 @@
 from .progress import update_progress
 from .ast_parser import analyze_folder
 from .lsast_scanner import lsast_scan_folder
+from .incremental import compute_file_manifest, compute_ruleset_version, diff_manifests, find_baseline_scan
 from .semgrep_detector import SemgrepDetectionError
 from datetime import datetime, timezone
 import traceback
@@ -22,8 +23,19 @@ def _persisted_findings_count(scan_id) -> int:
     return Finding.objects.filter(scan_id=scan_id, deleted=False).count()
 
 
+def _copy_forward_unchanged(baseline_scan_id: str, new_scan_id: str, unchanged_paths: set) -> int:
+    """Bulk-copies findings for files whose content is unchanged since the
+    baseline scan (see scanner/rag/incremental.py's diff_manifests), so the
+    new scan doesn't have to re-detect/re-verify them. Function-local import
+    of FindingModel matches this module's existing convention for
+    local.api_app model imports (see _persisted_findings_count above).
+    """
+    from local.api_app.models.finding_models import FindingModel
+    return FindingModel.copy_forward(baseline_scan_id, new_scan_id, unchanged_paths)
+
+
 def scan_folder(folder_path, scan_id, triggered_by, scan_name,
-                 skip_fingerprints=frozenset(), cancel_event=None):
+                 skip_fingerprints=frozenset(), cancel_event=None, project_id=None):
     """Run a vulnerability scan via the LSAST engine (the only engine).
 
     LSAST = Semgrep detects -> LLM verifier classifies each finding TP/FP ->
@@ -34,6 +46,15 @@ def scan_folder(folder_path, scan_id, triggered_by, scan_name,
 
     ``skip_fingerprints``/``cancel_event`` support resuming an interrupted scan
     -- see scanner/rag/resume.py and local/api_app/views/scan_views.py.
+
+    ``project_id``, when given, enables incremental scanning: if a completed
+    baseline scan exists for this project on the current ruleset version (see
+    scanner/rag/incremental.py), only changed/new files are re-detected and
+    findings for unchanged files are copied forward from the baseline. When
+    ``project_id`` is None or no baseline is found, this falls back to a full
+    scan (``only_files=None``), identical to pre-incremental-scan behavior.
+    On successful completion, this project's file manifest + ruleset version
+    are persisted so the *next* scan of this project has a usable baseline.
     """
     # ----------------------------------------------------------
     # STEP 1 — AST ANALYSIS (LOC / functions / languages for the dashboard)
@@ -67,9 +88,26 @@ def scan_folder(folder_path, scan_id, triggered_by, scan_name,
     # ----------------------------------------------------------
     update_progress(scan_id=scan_id, status="in_progress")
     try:
+        # Incremental-scan baseline lookup: a project_id-scoped completed scan
+        # on the current ruleset version lets us restrict detection to only
+        # changed/new files and copy forward findings for unchanged ones. No
+        # baseline (first scan, ruleset changed, or no project_id) falls back
+        # to only_files=None -- the legacy full-folder scan, unchanged.
+        ruleset_version = compute_ruleset_version()
+        new_manifest = compute_file_manifest(folder_path)
+        baseline = find_baseline_scan(project_id, ruleset_version)
+
+        only_files = None
+        if baseline is not None:
+            changed_or_new, unchanged, _removed = diff_manifests(baseline.file_manifest, new_manifest)
+            only_files = sorted(changed_or_new)
+            if unchanged:
+                _copy_forward_unchanged(baseline.id, scan_id, unchanged)
+
         visible, _filtered = lsast_scan_folder(
             folder_path, scan_id, triggered_by,
             skip_fingerprints=skip_fingerprints, cancel_event=cancel_event,
+            only_files=only_files,
         )
     except SemgrepDetectionError as e:
         # The detector never actually produced a result (timeout or missing
@@ -110,6 +148,11 @@ def scan_folder(folder_path, scan_id, triggered_by, scan_name,
         total=total_files,     # re-assert the real file count in case anything else wrote here
         status="completed",
         end_time=datetime.now(timezone.utc),
+        # Persisted unconditionally (incl. the fallback/full-scan case) so the
+        # *next* scan of this project always has a usable incremental-scan
+        # baseline -- see the docstring above.
+        file_manifest=new_manifest,
+        ruleset_version=ruleset_version,
     )
     # Consume a trial slot only on successful completion (no-op when trial mode is
     # off). Failures/cancellation return before reaching here, so they never count.

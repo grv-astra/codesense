@@ -60,11 +60,15 @@ os.makedirs(MEDIA_ROOT, exist_ok=True)
 
 
 def _run_lsast_pipeline(scan_id, source_path, triggered_by, scan_name,
-                        skip_fingerprints=frozenset(), cancel_event=None):
+                        skip_fingerprints=frozenset(), cancel_event=None, project_id=None):
     """Runs the LSAST pipeline over an already-extracted source_path and updates
     the Scan row accordingly. Shared by a fresh scan and a resumed one -- the
     only difference between the two call sites is what skip_fingerprints/
     cancel_event they pass in.
+
+    ``project_id``, when given, enables incremental scanning inside
+    scan_folder() (see scanner/rag/scanner.py) -- omitted here it just falls
+    back to a full scan, so it's an optional/backward-compatible addition.
 
     Once source_path exists, any non-'completed'/'cancelled' outcome lands in
     'interrupted' (never 'failed') -- resuming is always safe from here since
@@ -88,6 +92,7 @@ def _run_lsast_pipeline(scan_id, source_path, triggered_by, scan_name,
             scan_name=scan_name,
             skip_fingerprints=skip_fingerprints,
             cancel_event=cancel_event,
+            project_id=project_id,
         )
         logging.info(f"Scan run finished. Found {len(findings) if findings else 0} vulnerabilities.")
     except Exception as e:
@@ -209,7 +214,7 @@ class ScanCreateView(APIView):
                 scan_thread = threading.Thread(
                     target=_run_lsast_pipeline,
                     args=(scan_id, extracted_folder_path, triggered_by, scan_name),
-                    kwargs={"cancel_event": cancel_event},
+                    kwargs={"cancel_event": cancel_event, "project_id": project_id},
                     daemon=True,
                 )
                 scan_thread.start()
@@ -337,7 +342,8 @@ class GitHubRepoScanView(APIView):
 
             Scan.objects.filter(id=scan_id).update(source_path=folder_path)
             cancel_event = _cancel_events.get(scan_id)
-            _run_lsast_pipeline(scan_id, folder_path, triggered_by, scan_name, cancel_event=cancel_event)
+            _run_lsast_pipeline(scan_id, folder_path, triggered_by, scan_name,
+                               cancel_event=cancel_event, project_id=project_id)
 
         global scan_thread
         with scan_thread_lock:
@@ -476,7 +482,8 @@ class ScanResumeView(APIView):
             scan_thread = threading.Thread(
                 target=_run_lsast_pipeline,
                 args=(scan_id, source_path, scan["triggered_by"], scan["scan_name"]),
-                kwargs={"skip_fingerprints": skip, "cancel_event": cancel_event},
+                kwargs={"skip_fingerprints": skip, "cancel_event": cancel_event,
+                        "project_id": scan["project_id"]},
                 daemon=True,
             )
             scan_thread.start()
