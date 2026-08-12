@@ -271,6 +271,7 @@ def normalize(f: SemgrepFinding, scan_id: str, triggered_by: str,
 
     finding = {
         "scan_id": scan_id,
+        "first_seen_scan_id": scan_id,
         "cwe": f.cwe or "CWE-Unknown",
         "cvss_vector": cvss_vector,
         "cvss_score": cvss_score,

@@ -88,3 +88,14 @@ class FindingModelTests(TestCase):
             "fingerprint": "abc123",
         }])
         self.assertEqual(saved[0]["fingerprint"], "abc123")
+
+    def test_insert_many_persists_first_seen_scan_id(self):
+        from local.api_app.models.finding_models import FindingModel
+        from datetime import datetime, timezone
+
+        result = FindingModel.insert_many([{
+            "scan_id": "scan1", "created_by": "u", "cwe": "CWE-89",
+            "file_path": "a.py [1,2]", "created_at": datetime.now(timezone.utc),
+            "first_seen_scan_id": "scan1",
+        }])
+        self.assertEqual(result[0]["first_seen_scan_id"], "scan1")

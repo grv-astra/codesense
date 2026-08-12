@@ -86,6 +86,12 @@ class Finding(UUIDModel):
     # skip re-running the LLM step for them. Blank for pre-existing rows.
     fingerprint = models.CharField(max_length=64, blank=True, default="", db_index=True)
 
+    # Scan in which this finding was ORIGINALLY detected. On the first scan of
+    # a project this equals scan_id. A later task will carry this value
+    # forward across consecutive incremental scans so a finding's provenance
+    # (first detection) survives even after many re-scans copy it forward.
+    first_seen_scan_id = models.CharField(max_length=32, blank=True, default="", db_index=True)
+
     class Meta:
         app_label = "api_app"
         db_table = "findings"

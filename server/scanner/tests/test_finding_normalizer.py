@@ -160,6 +160,11 @@ class NormalizeTests(SimpleTestCase):
         finding, _ = normalize(f, "s", "u")
         self.assertEqual(finding["file_path"], f"{f.file_path} [{f.start_line},{f.end_line}]")
 
+    def test_normalize_sets_first_seen_scan_id_to_own_scan(self):
+        f = _sample_finding()
+        finding, _ = normalize(f, "scan-abc", "u")
+        self.assertEqual(finding["first_seen_scan_id"], "scan-abc")
+
 
 class NormalizeVerdictFieldsTests(SimpleTestCase):
     """W7 — the verifier's metadata + the Semgrep rule_id must survive into the
