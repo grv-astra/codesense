@@ -3,8 +3,10 @@ import os
 import tempfile
 import shutil
 import unittest
+from unittest.mock import patch
 
 from scanner.rag.incremental import compute_file_manifest, diff_manifests
+from scanner.rag.incremental import compute_ruleset_version
 
 
 class ComputeFileManifestTests(unittest.TestCase):
@@ -62,3 +64,45 @@ class DiffManifestsTests(unittest.TestCase):
         self.assertEqual(changed_or_new, set())
         self.assertEqual(unchanged, {"a.py", "b.py"})
         self.assertEqual(removed, set())
+
+
+class ComputeRulesetVersionTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="codesense_incr_rules_test_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel_path, content):
+        full = os.path.join(self.tmp, rel_path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w") as f:
+            f.write(content)
+
+    def test_same_rules_content_gives_same_version(self):
+        self._write("python/sqli.yaml", "rule: sqli")
+        with patch("scanner.rag.incremental.get_semgrep_rules_dir", return_value=self.tmp), \
+             patch("scanner.rag.incremental.get_privacy_rules_dir", return_value=""):
+            v1 = compute_ruleset_version()
+            v2 = compute_ruleset_version()
+        self.assertEqual(v1, v2)
+
+    def test_changed_rules_content_gives_different_version(self):
+        self._write("python/sqli.yaml", "rule: sqli")
+        with patch("scanner.rag.incremental.get_semgrep_rules_dir", return_value=self.tmp), \
+             patch("scanner.rag.incremental.get_privacy_rules_dir", return_value=""):
+            v1 = compute_ruleset_version()
+
+        self._write("python/sqli.yaml", "rule: sqli-modified")
+        with patch("scanner.rag.incremental.get_semgrep_rules_dir", return_value=self.tmp), \
+             patch("scanner.rag.incremental.get_privacy_rules_dir", return_value=""):
+            v2 = compute_ruleset_version()
+
+        self.assertNotEqual(v1, v2)
+
+    def test_empty_rules_dirs_still_return_a_stable_value(self):
+        with patch("scanner.rag.incremental.get_semgrep_rules_dir", return_value=""), \
+             patch("scanner.rag.incremental.get_privacy_rules_dir", return_value=""):
+            v1 = compute_ruleset_version()
+            v2 = compute_ruleset_version()
+        self.assertEqual(v1, v2)
