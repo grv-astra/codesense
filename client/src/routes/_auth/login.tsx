@@ -1,4 +1,3 @@
-import { Button } from '@/components/atomic/button';
 import { Input } from '@/components/atomic/input';
 import { useAuth } from '@/hooks/use-auth';
 import { useSetupStatus } from '@/hooks/use-setup';
@@ -6,7 +5,7 @@ import { authService } from '@/lib/auth';
 import { useForm } from '@tanstack/react-form';
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { AxiosError } from 'axios';
-import { Eye, EyeOff, Lock, Mail, User } from 'lucide-react';
+import { Eye, EyeOff, Lock, Mail } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -57,28 +56,26 @@ function RouteComponent() {
   }, [loginError, toast]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4" style={{ backgroundColor: '#2D2D2D' }}>
+    <div className="min-h-screen flex items-center justify-center bg-[#1c1c1c] p-4">
+      <div className="w-full max-w-4xl flex flex-col md:flex-row rounded-2xl shadow-2xl overflow-hidden">
 
-      <div className="flex rounded-2xl shadow-2xl overflow-hidden">
-
-        {/* Logo Side */}
-        <div className="flex flex-col items-center justify-between p-10 bg-[#2b2b2b]">
-          <img src="/Logofull.png" alt="Logo" className="object-contain w-2xl p-10" />
-          <div className='text-xl font-medium'>Intelligent code review, engineered for security and trust.</div>
+        {/* Brand side */}
+        <div className="w-full md:w-1/2 flex flex-col items-center justify-center gap-6 bg-[#242424] px-10 py-14">
+          <img src="/Logofull.png" alt="Code Sense" className="w-48 object-contain" />
+          <p className="text-center text-[15px] text-gray-300 leading-relaxed max-w-xs">
+            Intelligent code review, engineered for security and trust.
+          </p>
         </div>
 
-        {/* Login Form Side */}
-        <div className="w-full max-w-md text-black bg-white">
-          <div className="px-8 py-6 text-center" style={{ backgroundColor: '#E5E5E5' }}>
-            <div className="w-20 h-20 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ backgroundColor: '#BF0000' }}>
-              <User className="size-10 text-white" />
-            </div>
-            <h1 className="text-2xl font-bold text-black mb-2">Login</h1>
+        {/* Form side */}
+        <div className="w-full md:w-1/2 bg-white px-8 sm:px-10 py-12 flex flex-col justify-center">
+          <div className="mb-8">
+            <h1 className="text-[22px] font-semibold text-gray-900">Welcome back</h1>
+            <p className="text-[14px] text-gray-500 mt-1">Sign in to continue to Code Sense.</p>
           </div>
 
-          {/* Form */}
           <form
-            className="px-8 py-8 space-y-6"
+            className="space-y-5"
             onSubmit={(e) => {
               e.preventDefault();
               form.handleSubmit();
@@ -95,29 +92,27 @@ function RouteComponent() {
               }}
               children={({ state, handleChange, handleBlur }) => (
                 <div>
-                  <label className="block text-sm font-medium mb-2" style={{ color: '#2D2D2D' }}>
-                    Email Address
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1.5">
+                    Email address
                   </label>
                   <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <Mail className="h-5 w-5" style={{ color: '#BF0000' }} />
-                    </div>
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
                     <Input
                       type="email"
                       value={state.value}
                       onChange={(e) => handleChange(e.target.value)}
                       onBlur={handleBlur}
-                      className={`w-full pl-10 pr-4 py-3 border-2 rounded-lg focus:outline-none focus:ring-2 transition-all duration-200 ${
+                      className={[
+                        'pl-10 h-11 text-[14px]',
                         state.meta.errors.length > 0
-                          ? 'border-red-500 focus:border-red-500 focus:ring-red-200'
-                          : 'border-gray-300 focus:ring-red-200'
-                      }`}
-                      placeholder="Enter your email"
-                      style={{ backgroundColor: '#FFFFFF' }}
+                          ? 'border-red-500 focus-visible:ring-red-200'
+                          : 'focus-visible:ring-[#bf0000]/30',
+                      ].join(' ')}
+                      placeholder="you@company.com"
                     />
                   </div>
                   {state.meta.errors[0] && (
-                    <p className="text-red-500 text-sm mt-1">{state.meta.errors[0]}</p>
+                    <p className="text-red-600 text-[12px] mt-1.5">{state.meta.errors[0]}</p>
                   )}
                 </div>
               )}
@@ -133,67 +128,80 @@ function RouteComponent() {
               }}
               children={({ state, handleChange, handleBlur }) => (
                 <div>
-                  <label className="block text-sm font-medium mb-2" style={{ color: '#2D2D2D' }}>
+                  <label className="block text-[13px] font-medium text-gray-700 mb-1.5">
                     Password
                   </label>
                   <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <Lock className="h-5 w-5" style={{ color: '#BF0000' }} />
-                    </div>
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
                     <Input
                       type={showPassword ? 'text' : 'password'}
                       value={state.value}
                       onChange={(e) => handleChange(e.target.value)}
                       onBlur={handleBlur}
-                      className={`w-full pl-10 pr-12 py-3 border-2 rounded-lg focus:outline-none focus:ring-2 transition-all duration-200 ${
+                      className={[
+                        'pl-10 pr-10 h-11 text-[14px]',
                         state.meta.errors.length > 0
-                          ? 'border-red-500 focus:border-red-500 focus:ring-red-200'
-                          : 'border-gray-300 focus:ring-red-200'
-                      }`}
+                          ? 'border-red-500 focus-visible:ring-red-200'
+                          : 'focus-visible:ring-[#bf0000]/30',
+                      ].join(' ')}
                       placeholder="Enter your password"
-                      style={{ backgroundColor: '#FFFFFF' }}
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
-                      className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                      tabIndex={-1}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
                     >
                       {showPassword ? (
-                        <EyeOff className="h-5 w-5 text-gray-400 hover:text-gray-600 transition-colors" />
+                        <EyeOff className="h-4 w-4" />
                       ) : (
-                        <Eye className="h-5 w-5 text-gray-400 hover:text-gray-600 transition-colors" />
+                        <Eye className="h-4 w-4" />
                       )}
                     </button>
                   </div>
                   {state.meta.errors[0] && (
-                    <p className="text-red-500 text-sm mt-1">{state.meta.errors[0]}</p>
+                    <p className="text-red-600 text-[12px] mt-1.5">{state.meta.errors[0]}</p>
                   )}
                 </div>
               )}
             />
 
             {/* Submit */}
-            <Button
+            <button
               type="submit"
               disabled={isLoginLoading}
-              className={`w-full py-5 px-4 ${
-                isLoginLoading ? 'opacity-70 cursor-not-allowed' : 'hover:shadow-lg active:scale-95'
-              }`}
+              className={[
+                'w-full inline-flex items-center justify-center gap-2 h-11 rounded-lg text-[14px] font-semibold text-white transition-all duration-200',
+                'focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#bf0000]',
+                isLoginLoading
+                  ? 'bg-[#bf0000]/70 cursor-wait'
+                  : 'bg-[#bf0000] hover:bg-[#a00000] active:scale-[0.98] shadow-sm shadow-red-900/20',
+              ].join(' ')}
             >
               {isLoginLoading ? (
-                <div className="flex items-center justify-center">
-                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
-                  Signing in...
-                </div>
+                <>
+                  <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="3"
+                      strokeDasharray="40"
+                      strokeDashoffset="15"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  Signing in…
+                </>
               ) : (
-                'Sign In'
+                'Sign in'
               )}
-            </Button>
+            </button>
           </form>
         </div>
 
       </div>
-
     </div>
   );
 }

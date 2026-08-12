@@ -27,8 +27,8 @@ export const ThemeProvider = ({ children }: ThemeProviderProps) => {
       if (saved) {
         return saved === 'dark';
       }
-      // Default to system preference
-      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+      // Default to light regardless of system preference.
+      return false;
     }
     return false;
   });

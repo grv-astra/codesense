@@ -5,6 +5,7 @@ import { useAssetSetup } from '@/hooks/use-asset-setup';
 import { useActivation } from '@/hooks/use-activation';
 import { FirstRunSetup } from '@/components/setup/FirstRunSetup';
 import { ActivationGate } from '@/components/setup/ActivationGate';
+import { CheckingActivation } from '@/components/setup/CheckingActivation';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -25,7 +26,7 @@ function RootComponent() {
   } else if (activation.state.status === 'locked') {
     body = <ActivationGate error={activation.error} submitting={activation.submitting} onSubmit={activation.submit} />;
   } else if (activation.state.status === 'checking') {
-    body = null; // avoid a login-page flash while the one-time check is in flight
+    body = <CheckingActivation />; // loading state, not a login-page flash
   } else {
     body = <Outlet />;
   }

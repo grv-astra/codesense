@@ -1,6 +1,6 @@
 import { Button } from '@/components/atomic/button';
 import { useScanDetails } from '@/hooks/use-scans';
-import { createFileRoute, Outlet, useParams, useLocation, Link, useRouter } from '@tanstack/react-router'
+import { createFileRoute, Outlet, useParams, useLocation, Link, useNavigate } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_authenticated/scan/$scanId')({
   component: RouteComponent,
@@ -9,7 +9,7 @@ export const Route = createFileRoute('/_authenticated/scan/$scanId')({
 function RouteComponent() {
   const { scanId } = useParams({ from: '/_authenticated/scan/$scanId' });
   const { data: scan } = useScanDetails(scanId);
-  const router = useRouter();
+  const navigate = useNavigate();
   const location = useLocation();
   
   // Determine active tab based on current pathname
@@ -28,7 +28,11 @@ function RouteComponent() {
       <Button
               variant="ghost"
               type="button"
-              onClick={() => router.history.back()}
+              disabled={!scan?.project_id}
+              onClick={() => {
+                if (!scan?.project_id) return;
+                navigate({ to: '/project/$projectId/codescan', params: { projectId: scan.project_id } });
+              }}
             >
               ←  Back to Code Scan List
             </Button>

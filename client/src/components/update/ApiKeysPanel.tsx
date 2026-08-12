@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { Badge } from '@/components/atomic/badge';
 import { Button } from '@/components/atomic/button';
 import { Input } from '@/components/atomic/input';
 import {
@@ -142,45 +143,64 @@ export function ApiKeysPanel({ projectId }: { projectId: string }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">CI API Keys</h2>
+        <div>
+          <h2 className="text-lg font-semibold">CI API Keys</h2>
+          <p className="text-sm text-muted-foreground">
+            Let CI/CD pipelines trigger scans for this project without a human login.
+          </p>
+        </div>
         <Button onClick={() => setDialogOpen(true)}>Generate new key</Button>
       </div>
 
-      {isLoading && <p>Loading...</p>}
+      {isLoading && <p className="text-sm text-muted-foreground">Loading...</p>}
       {!isLoading && (!keys || keys.length === 0) && (
-        <p className="text-muted-foreground text-sm">No API keys yet.</p>
+        <p className="text-muted-foreground text-sm border rounded-lg p-6 text-center">
+          No API keys yet.
+        </p>
       )}
       {!isLoading && keys && keys.length > 0 && (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-muted-foreground">
-              <th>Name</th>
-              <th>Prefix</th>
-              <th>Created</th>
-              <th>Last used</th>
-              <th>Status</th>
-              <th className="sr-only">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {keys.map((key) => (
-              <tr key={key.id}>
-                <td>{key.name}</td>
-                <td>{key.key_prefix}...</td>
-                <td>{new Date(key.created_at).toLocaleDateString()}</td>
-                <td>{key.last_used_at ? new Date(key.last_used_at).toLocaleDateString() : 'Never'}</td>
-                <td>{key.revoked_at ? 'Revoked' : 'Active'}</td>
-                <td>
-                  {!key.revoked_at && (
-                    <Button size="sm" variant="outline" onClick={() => handleRevoke(key.id)}>
-                      Revoke
-                    </Button>
-                  )}
-                </td>
+        <div className="border rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-muted-foreground bg-muted/50">
+                <th className="px-4 py-2 font-medium">Name</th>
+                <th className="px-4 py-2 font-medium">Prefix</th>
+                <th className="px-4 py-2 font-medium">Created</th>
+                <th className="px-4 py-2 font-medium">Last used</th>
+                <th className="px-4 py-2 font-medium">Status</th>
+                <th className="sr-only">Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {keys.map((key) => (
+                <tr key={key.id} className="border-t">
+                  <td className="px-4 py-3 font-medium">{key.name}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                    {key.key_prefix}...
+                  </td>
+                  <td className="px-4 py-3">{new Date(key.created_at).toLocaleDateString()}</td>
+                  <td className="px-4 py-3">
+                    {key.last_used_at ? new Date(key.last_used_at).toLocaleDateString() : 'Never'}
+                  </td>
+                  <td className="px-4 py-3">
+                    {key.revoked_at ? (
+                      <Badge variant="outline">Revoked</Badge>
+                    ) : (
+                      <Badge variant="secondary">Active</Badge>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {!key.revoked_at && (
+                      <Button size="sm" variant="outline" onClick={() => handleRevoke(key.id)}>
+                        Revoke
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       <GenerateKeyDialog open={dialogOpen} onOpenChange={setDialogOpen} onCreate={handleCreate} />
