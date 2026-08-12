@@ -83,3 +83,62 @@ class ScanModelTests(TestCase):
         )
         self.assertEqual(scan.file_manifest, {})
         self.assertEqual(scan.ruleset_version, "")
+
+    def test_find_baseline_scan_returns_most_recent_completed_matching_ruleset(self):
+        from local.api_app.models.orm import Scan
+        from scanner.rag.incremental import find_baseline_scan
+        from datetime import datetime, timezone, timedelta
+
+        now = datetime.now(timezone.utc)
+        Scan.objects.create(
+            project_id="proj-baseline", scan_name="old", status="completed",
+            created_at=now - timedelta(hours=2), file_manifest={"a.py": "h1"},
+            ruleset_version="v1",
+        )
+        newest = Scan.objects.create(
+            project_id="proj-baseline", scan_name="newer", status="completed",
+            created_at=now - timedelta(hours=1), file_manifest={"a.py": "h2"},
+            ruleset_version="v1",
+        )
+
+        baseline = find_baseline_scan("proj-baseline", "v1")
+        self.assertEqual(baseline.id, newest.id)
+
+    def test_find_baseline_scan_ignores_non_completed_scans(self):
+        from local.api_app.models.orm import Scan
+        from scanner.rag.incremental import find_baseline_scan
+        from datetime import datetime, timezone
+
+        Scan.objects.create(
+            project_id="proj-inprogress", scan_name="s", status="in_progress",
+            created_at=datetime.now(timezone.utc), file_manifest={"a.py": "h1"},
+            ruleset_version="v1",
+        )
+        self.assertIsNone(find_baseline_scan("proj-inprogress", "v1"))
+
+    def test_find_baseline_scan_ignores_mismatched_ruleset_version(self):
+        from local.api_app.models.orm import Scan
+        from scanner.rag.incremental import find_baseline_scan
+        from datetime import datetime, timezone
+
+        Scan.objects.create(
+            project_id="proj-rules", scan_name="s", status="completed",
+            created_at=datetime.now(timezone.utc), file_manifest={"a.py": "h1"},
+            ruleset_version="v1-old",
+        )
+        self.assertIsNone(find_baseline_scan("proj-rules", "v2-new"))
+
+    def test_find_baseline_scan_ignores_empty_manifest(self):
+        from local.api_app.models.orm import Scan
+        from scanner.rag.incremental import find_baseline_scan
+        from datetime import datetime, timezone
+
+        Scan.objects.create(
+            project_id="proj-empty", scan_name="s", status="completed",
+            created_at=datetime.now(timezone.utc), file_manifest={}, ruleset_version="v1",
+        )
+        self.assertIsNone(find_baseline_scan("proj-empty", "v1"))
+
+    def test_find_baseline_scan_returns_none_for_unknown_project(self):
+        from scanner.rag.incremental import find_baseline_scan
+        self.assertIsNone(find_baseline_scan("no-such-project", "v1"))

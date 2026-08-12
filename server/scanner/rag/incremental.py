@@ -1,6 +1,7 @@
 import hashlib
 import os
 
+from local.api_app.models.orm import Scan
 from scanner.services.tools import get_semgrep_rules_dir, get_privacy_rules_dir
 
 
@@ -57,3 +58,16 @@ def compute_ruleset_version() -> str:
     _hash_directory_contents(get_semgrep_rules_dir(), hasher)
     _hash_directory_contents(get_privacy_rules_dir(), hasher)
     return hasher.hexdigest()
+
+
+def find_baseline_scan(project_id: str, ruleset_version: str):
+    """Most recent completed Scan for project_id with a non-empty manifest and a matching
+    ruleset_version, or None if no such scan exists (first scan, prior scan incomplete,
+    or the ruleset has changed since the last completed scan)."""
+    return (
+        Scan.objects
+        .filter(project_id=project_id, status="completed", ruleset_version=ruleset_version)
+        .exclude(file_manifest={})
+        .order_by("-created_at")
+        .first()
+    )
