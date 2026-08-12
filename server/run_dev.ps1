@@ -33,6 +33,6 @@ Write-Host "SEMGREP_BIN       = $env:SEMGREP_BIN"
 Write-Host "SEMGREP_RULES_DIR = $env:SEMGREP_RULES_DIR"
 Write-Host "GRYPE_DB_CACHE_DIR= $env:GRYPE_DB_CACHE_DIR"
 Write-Host "COSIGN_KEY_DIR    = $env:COSIGN_KEY_DIR"
-Write-Host "Starting Code Sense backend on http://127.0.0.1:8585 ..."
+Write-Host "Starting Code Sense backend on http://127.0.0.1:8586 ..."
 
-& (Join-Path $server ".venv\Scripts\python.exe") (Join-Path $server "run_server.py") 127.0.0.1 8585
+& (Join-Path $server ".venv\Scripts\python.exe") (Join-Path $server "run_server.py") 127.0.0.1 8586

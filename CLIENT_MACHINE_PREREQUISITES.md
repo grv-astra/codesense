@@ -12,6 +12,22 @@ This is a one-time preparation step; none of this requires our involvement.
 | npm | (bundled with Node) | Comes with Node.js automatically |
 | Git | any recent version | Only needed if we're deploying via a repository checkout |
 
+## 1a. If we're delivering the packaged desktop app (.exe / zip, not a source checkout)
+
+The desktop build needs two Windows components that are **not always present out of the
+box** — especially on Windows Server or other minimal/locked-down images:
+
+| Requirement | Notes |
+|---|---|
+| Microsoft Edge WebView2 Runtime | Ships by default on most Windows 10/11 **desktop** installs, but **not** on Windows Server images. Check with (Command Prompt): `reg query "HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"` — if that errors with "unable to find the specified registry key," it's missing. |
+| Microsoft Visual C++ Redistributable (x64) | Needed by the bundled local AI engine. Check with: `wmic os get Caption,ProductType` — a Server result (`ProductType: 3`) is a signal to check this explicitly, since Server images commonly lack it. |
+
+If either is missing and the machine has no internet access to fetch them, let us know —
+we can provide both as small standalone files (well under 100MB combined, not the full
+application) to place on the machine before first launch.
+
+**Confirm the machine's CPU architecture is x64**, not ARM64 — the app is built for x64 only.
+
 ## 2. Disk space
 
 - At least **2 GB free** for the application, its dependencies, and the offline scanning
