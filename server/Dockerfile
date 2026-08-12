@@ -58,11 +58,16 @@ RUN mkdir -p /app/vendor && \
     rm -rf /app/vendor/semgrep-rules/.git
 ENV SEMGREP_RULES_DIR=/app/vendor/semgrep-rules
 
-# Bundled Grype vulnerability DB snapshot -- avoids a live `grype db update`
-# at scan time, which a network-restricted client VM couldn't do anyway.
-# Frozen/no-auto-update at runtime, same pattern as the offline desktop build.
-COPY dist/grype-db /app/vendor/grype-db
+# Fetch a FRESH Grype vulnerability DB snapshot at build time, matching
+# whatever schema this exact grype binary expects -- NOT dist/grype-db
+# (that's a stale schema-5 snapshot; this grype build wants schema 6, and a
+# mismatched schema dir makes grype silently report 0 vulnerabilities with
+# no error anywhere, same failure mode already documented for the desktop
+# build in main.rs's GRYPE_DB_SCHEMA_VERSION comment -- learned the hard way
+# here too). Frozen/no-auto-update at runtime: the client VM won't have
+# network to refresh it, so this snapshot is what ships.
 ENV GRYPE_DB_CACHE_DIR=/app/vendor/grype-db
+RUN grype db update && grype db status
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONUTF8=1
