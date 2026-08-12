@@ -148,6 +148,18 @@ class NormalizeTests(SimpleTestCase):
         f.message = ""
         self.assertEqual(normalize(f, "s", "u")[0]["title"], "Vulnerability")
 
+    def test_normalize_strips_scan_root_from_absolute_path(self):
+        f = _sample_finding()
+        f.file_path = r"C:\Users\tester\Temp\codesense-media\scans\abc123\source\src\app.py"
+        finding, _ = normalize(f, "s", "u", scan_root=r"C:\Users\tester\Temp\codesense-media\scans\abc123\source")
+        self.assertTrue(finding["file_path"].startswith("src/app.py"))
+        self.assertNotIn("codesense-media", finding["file_path"])
+
+    def test_normalize_without_scan_root_keeps_existing_behavior(self):
+        f = _sample_finding()
+        finding, _ = normalize(f, "s", "u")
+        self.assertEqual(finding["file_path"], f"{f.file_path} [{f.start_line},{f.end_line}]")
+
 
 class NormalizeVerdictFieldsTests(SimpleTestCase):
     """W7 — the verifier's metadata + the Semgrep rule_id must survive into the

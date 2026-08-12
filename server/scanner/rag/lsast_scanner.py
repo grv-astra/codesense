@@ -41,7 +41,7 @@ def _max_workers() -> int:
         return 4
 
 
-def _process_one(sf, scan_id: str, triggered_by: str, llm_ok: bool = True):
+def _process_one(sf, scan_id: str, triggered_by: str, llm_ok: bool = True, scan_root: str = ""):
     """Run normalize → verify → fuse → (enrich) for ONE finding.
 
     Pure compute + LLM I/O only — NO DB writes or progress updates, so it is safe
@@ -52,7 +52,7 @@ def _process_one(sf, scan_id: str, triggered_by: str, llm_ok: bool = True):
     preserved as a low-confidence TP for human review.
     """
     try:
-        finding_dict, dataflow = normalize(sf, scan_id=scan_id, triggered_by=triggered_by)
+        finding_dict, dataflow = normalize(sf, scan_id=scan_id, triggered_by=triggered_by, scan_root=scan_root)
         # Resume checkpoint identity -- set unconditionally (independent of
         # llm_ok) so a fail-open finding is still skippable on a later resume.
         finding_dict["fingerprint"] = fingerprint(sf)
@@ -213,7 +213,7 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str,
             # persisting, bounded by `workers` items. Still far better than
             # the old batch-everything-then-persist behavior.
             for outcome in ex.map(
-                    lambda sf: _process_one(sf, scan_id, triggered_by, llm_ok), sem_findings):
+                    lambda sf: _process_one(sf, scan_id, triggered_by, llm_ok, folder_path), sem_findings):
                 _persist(outcome)
                 if cancel_event is not None and cancel_event.is_set():
                     cancelled = True
@@ -227,7 +227,7 @@ def lsast_scan_folder(folder_path: str, scan_id: str, triggered_by: str,
             ex.shutdown(wait=not cancelled, cancel_futures=cancelled)
     else:
         for sf in sem_findings:
-            _persist(_process_one(sf, scan_id, triggered_by, llm_ok))
+            _persist(_process_one(sf, scan_id, triggered_by, llm_ok, folder_path))
             if cancel_event is not None and cancel_event.is_set():
                 cancelled = True
                 break

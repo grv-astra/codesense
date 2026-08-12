@@ -7,6 +7,7 @@ the UI keep working unchanged.
 from __future__ import annotations
 
 import math
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -234,8 +235,35 @@ def _build_mitigation(f: SemgrepFinding, reference: str) -> str:
     return " ".join(parts)[:1000]
 
 
-def normalize(f: SemgrepFinding, scan_id: str, triggered_by: str) -> tuple[dict, DataflowContext]:
-    """Return (legacy_finding_dict, dataflow_context). The dict matches extract.py's shape."""
+def _relativize_path(raw_path: str, scan_root: str) -> str:
+    """Strip ``scan_root`` from an absolute detector-reported path.
+
+    The detector (OpenGrep) reports absolute paths when scanned against an
+    absolute target, and the scan target is always a per-scan temp directory
+    (``.../codesense-media/scans/<scan_id>/source/...``). Left absolute,
+    ``file_path`` can never match across two different scans of the same
+    project. When ``scan_root`` isn't supplied (legacy callers), this is a
+    no-op so existing behavior is unchanged.
+    """
+    if not scan_root or not raw_path:
+        return raw_path
+    try:
+        if not os.path.isabs(raw_path):
+            return raw_path
+        rel = os.path.relpath(raw_path, scan_root)
+    except ValueError:
+        return raw_path
+    return rel.replace(os.sep, "/")
+
+
+def normalize(f: SemgrepFinding, scan_id: str, triggered_by: str,
+              scan_root: str = "") -> tuple[dict, DataflowContext]:
+    """Return (legacy_finding_dict, dataflow_context). The dict matches extract.py's shape.
+
+    ``scan_root``, when supplied, is stripped from ``f.file_path`` so the
+    persisted ``file_path`` is relative to the project root instead of the
+    detector's absolute per-scan temp path (see ``_relativize_path``).
+    """
     cvss_score, cvss_vector = derive_cvss(f.cwe, f.severity)
     num = _cwe_number(f.cwe or "")
     reference = f"https://cwe.mitre.org/data/definitions/{num}.html" if num else "NA"
@@ -251,7 +279,7 @@ def normalize(f: SemgrepFinding, scan_id: str, triggered_by: str) -> tuple[dict,
         "title": (_rule_name(f.rule_id) or f.message or "Vulnerability")[:200],
         "description": f.message[:1000] if f.message else "",
         "severity": f.severity,
-        "file_path": f"{f.file_path} [{f.start_line},{f.end_line}]",
+        "file_path": f"{_relativize_path(f.file_path, scan_root)} [{f.start_line},{f.end_line}]",
         # Widened (context-padded) snippet for display when available; falls back to
         # the exact-match excerpt (e.g. source file no longer reachable). The LLM
         # prompts use f.code_excerpt directly, never this field.
