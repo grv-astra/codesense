@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from django.db import transaction
 from django.db.models import Q
 from local.api_app.models.orm import Finding, Scan
 
@@ -151,5 +152,6 @@ class FindingModel:
 
         if not to_create:
             return 0
-        Finding.objects.bulk_create(to_create)
+        with transaction.atomic():
+            Finding.objects.bulk_create(to_create)
         return len(to_create)

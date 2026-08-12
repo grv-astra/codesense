@@ -169,3 +169,28 @@ class FindingModelTests(TestCase):
     def test_copy_forward_returns_zero_for_empty_unchanged_set(self):
         from local.api_app.models.finding_models import FindingModel
         self.assertEqual(FindingModel.copy_forward("any-scan", "other-scan", set()), 0)
+
+    def test_copy_forward_is_atomic_nothing_persisted_on_failure(self):
+        from local.api_app.models.finding_models import FindingModel
+        from local.api_app.models.orm import Finding
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+
+        Finding.objects.create(
+            scan_id="scan-atomic-src", file_path="src/app.py [1,2]", cwe="CWE-89",
+            created_at=datetime.now(timezone.utc),
+        )
+        Finding.objects.create(
+            scan_id="scan-atomic-src", file_path="src/other.py [3,4]", cwe="CWE-79",
+            created_at=datetime.now(timezone.utc),
+        )
+
+        with patch(
+            "local.api_app.models.finding_models.Finding.objects.bulk_create",
+            side_effect=Exception("simulated failure partway through"),
+        ):
+            with self.assertRaises(Exception):
+                FindingModel.copy_forward("scan-atomic-src", "scan-atomic-dst", {"src/app.py", "src/other.py"})
+
+        # If the copy had partially committed before raising, this would find leftover rows.
+        self.assertEqual(Finding.objects.filter(scan_id="scan-atomic-dst").count(), 0)
